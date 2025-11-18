@@ -182,7 +182,7 @@ async function splice(
     );
 
     // Reply to the original comment
-    const successMessage = `✅ **Splice Bot**\n\nSuccessfully created PR #${newPr.number} with the extracted changes.\n\n🔗 ${newPr.url}`;
+    const successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
     await replyToComment(octokit, owner, repo, prNumber, commentId, successMessage);
 
     return {

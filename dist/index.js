@@ -30522,7 +30522,7 @@ async function splice(octokit, owner, repo, commentContext, instruction) {
         core.info('Creating pull request...');
         const newPr = await (0, github_1.createPullRequest)(octokit, owner, repo, prTitle, prDescription, branchName, baseBranch);
         // Reply to the original comment
-        const successMessage = `✅ **Splice Bot**\n\nSuccessfully created PR #${newPr.number} with the extracted changes.\n\n🔗 ${newPr.url}`;
+        const successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
         await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, commentId, successMessage);
         return {
             success: true,
