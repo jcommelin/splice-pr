@@ -129,10 +129,19 @@ export function generatePrDescription(options: PrDescriptionOptions): string {
     parts.push('', customDescription);
   }
 
+  // Machine-readable metadata for post-merge callbacks
+  const metadata = {
+    'splice-bot': {
+      'original-pr': originalPrNumber,
+      'comment-id': commentId,
+    },
+  };
+
   parts.push(
     '',
     '---',
-    '*Created by [Splice Bot](https://github.com/jcommelin/splice-pr)*'
+    '*Created by [Splice Bot](https://github.com/jcommelin/splice-pr)*',
+    `<!-- ${JSON.stringify(metadata)} -->`
   );
 
   return parts.join('\n');

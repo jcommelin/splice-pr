@@ -30296,6 +30296,7 @@ exports.addLabels = addLabels;
 exports.requestReviewers = requestReviewers;
 exports.checkForConflicts = checkForConflicts;
 exports.replyToComment = replyToComment;
+exports.createIssueComment = createIssueComment;
 exports.branchExists = branchExists;
 exports.deleteBranch = deleteBranch;
 const diff_1 = __nccwpck_require__(9952);
@@ -30493,6 +30494,17 @@ async function replyToComment(octokit, owner, repo, prNumber, commentId, message
     });
 }
 /**
+ * Create a comment on a PR/issue
+ */
+async function createIssueComment(octokit, owner, repo, issueNumber, body) {
+    await octokit.rest.issues.createComment({
+        owner,
+        repo,
+        issue_number: issueNumber,
+        body,
+    });
+}
+/**
  * Check if a branch exists
  */
 async function branchExists(octokit, owner, repo, branchName) {
@@ -30573,60 +30585,16 @@ async function run() {
         const octokit = github.getOctokit(token);
         // Get event context
         const context = github.context;
-        if (context.eventName !== 'pull_request_review_comment') {
-            core.setFailed(`Invalid event type: ${context.eventName}. Expected: pull_request_review_comment`);
-            return;
-        }
-        const payload = context.payload;
-        const comment = payload.comment;
-        const pullRequest = payload.pull_request;
-        if (!comment || !pullRequest) {
-            core.setFailed('Missing comment or pull request in payload');
-            return;
-        }
-        // Parse the instruction from the comment
-        const instruction = (0, parser_1.parseInstruction)(comment.body);
-        if (!instruction) {
-            core.info('Comment does not contain splice-bot command');
-            return;
-        }
-        core.info(`Processing splice-bot command from comment ${comment.id}`);
-        // Extract comment context
-        // For multi-line comments, start_line is the first line and line is the last
-        // For single-line comments, start_line is null
-        const endLine = comment.line || comment.original_line;
-        const startLine = comment.start_line || endLine;
-        // Get author information from the comment
-        const authorLogin = comment.user?.login || 'github-actions[bot]';
-        const authorEmail = comment.user?.id
-            ? `${comment.user.id}+${authorLogin}@users.noreply.github.com`
-            : 'github-actions[bot]@users.noreply.github.com';
-        const commentContext = {
-            commentId: comment.id,
-            prNumber: pullRequest.number,
-            path: comment.path,
-            startLine,
-            endLine,
-            originalStartLine: comment.original_start_line || comment.original_line,
-            originalEndLine: comment.original_line,
-            diffHunk: comment.diff_hunk,
-            body: comment.body,
-            commitId: comment.commit_id,
-            authorLogin,
-            authorEmail,
-        };
-        // Get repository info
         const owner = context.repo.owner;
         const repo = context.repo.repo;
-        // Run the splice operation
-        const result = await splice(octokit, owner, repo, commentContext, instruction);
-        if (result.success) {
-            core.info(`Successfully created PR: ${result.prUrl}`);
-            core.setOutput('pr-url', result.prUrl);
-            core.setOutput('branch-name', result.branchName);
+        if (context.eventName === 'pull_request_review_comment') {
+            await handleSpliceComment(octokit, owner, repo, context);
+        }
+        else if (context.eventName === 'pull_request') {
+            await handleMergeCallback(octokit, owner, repo, context);
         }
         else {
-            core.setFailed(result.error || 'Unknown error');
+            core.setFailed(`Invalid event type: ${context.eventName}`);
         }
     }
     catch (error) {
@@ -30636,6 +30604,114 @@ async function run() {
         else {
             core.setFailed('An unexpected error occurred');
         }
+    }
+}
+/**
+ * Handle splice-bot comment events
+ */
+async function handleSpliceComment(octokit, owner, repo, context) {
+    const payload = context.payload;
+    const comment = payload.comment;
+    const pullRequest = payload.pull_request;
+    if (!comment || !pullRequest) {
+        core.setFailed('Missing comment or pull request in payload');
+        return;
+    }
+    // Parse the instruction from the comment
+    const instruction = (0, parser_1.parseInstruction)(comment.body);
+    if (!instruction) {
+        core.info('Comment does not contain splice-bot command');
+        return;
+    }
+    core.info(`Processing splice-bot command from comment ${comment.id}`);
+    // Extract comment context
+    // For multi-line comments, start_line is the first line and line is the last
+    // For single-line comments, start_line is null
+    const endLine = comment.line || comment.original_line;
+    const startLine = comment.start_line || endLine;
+    // Get author information from the comment
+    const authorLogin = comment.user?.login || 'github-actions[bot]';
+    const authorEmail = comment.user?.id
+        ? `${comment.user.id}+${authorLogin}@users.noreply.github.com`
+        : 'github-actions[bot]@users.noreply.github.com';
+    const commentContext = {
+        commentId: comment.id,
+        prNumber: pullRequest.number,
+        path: comment.path,
+        startLine,
+        endLine,
+        originalStartLine: comment.original_start_line || comment.original_line,
+        originalEndLine: comment.original_line,
+        diffHunk: comment.diff_hunk,
+        body: comment.body,
+        commitId: comment.commit_id,
+        authorLogin,
+        authorEmail,
+    };
+    // Run the splice operation
+    const result = await splice(octokit, owner, repo, commentContext, instruction);
+    if (result.success) {
+        core.info(`Successfully created PR: ${result.prUrl}`);
+        core.setOutput('pr-url', result.prUrl);
+        core.setOutput('branch-name', result.branchName);
+    }
+    else {
+        core.setFailed(result.error || 'Unknown error');
+    }
+}
+/**
+ * Handle merge callback when a spliced PR is merged
+ */
+async function handleMergeCallback(octokit, owner, repo, context) {
+    const payload = context.payload;
+    const pr = payload.pull_request;
+    if (!pr) {
+        core.setFailed('Missing pull request in payload');
+        return;
+    }
+    // Verify this is a merge event
+    if (payload.action !== 'closed' || !pr.merged) {
+        core.info('PR was closed but not merged, skipping');
+        return;
+    }
+    // Parse metadata from PR description
+    const metadata = parseSpliceBotMetadata(pr.body || '');
+    if (!metadata) {
+        core.info('Not a splice-bot PR (no metadata found), skipping');
+        return;
+    }
+    const originalPrNumber = metadata['splice-bot']['original-pr'];
+    const baseBranch = pr.base.ref;
+    core.info(`Spliced PR #${pr.number} merged into ${baseBranch}, notifying original PR #${originalPrNumber}`);
+    // Post notification comment on original PR
+    const message = `🔀 Spliced PR #${pr.number} has been merged into \`${baseBranch}\`.\n\nYou may want to merge \`${baseBranch}\` into this PR to incorporate those changes and avoid duplicates.`;
+    try {
+        await (0, github_1.createIssueComment)(octokit, owner, repo, originalPrNumber, message);
+        core.info(`Posted notification to PR #${originalPrNumber}`);
+    }
+    catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        core.warning(`Failed to post notification to PR #${originalPrNumber}: ${errorMessage}`);
+    }
+}
+/**
+ * Parse splice-bot metadata from PR description
+ */
+function parseSpliceBotMetadata(body) {
+    // Look for the HTML comment with JSON metadata
+    const match = body.match(/<!--\s*(\{"splice-bot":.+?\})\s*-->/);
+    if (!match) {
+        return null;
+    }
+    try {
+        const metadata = JSON.parse(match[1]);
+        if (metadata['splice-bot'] && typeof metadata['splice-bot']['original-pr'] === 'number') {
+            return metadata;
+        }
+        return null;
+    }
+    catch {
+        return null;
     }
 }
 async function splice(octokit, owner, repo, commentContext, instruction) {
@@ -30860,7 +30936,14 @@ function generatePrDescription(options) {
     if (customDescription) {
         parts.push('', customDescription);
     }
-    parts.push('', '---', '*Created by [Splice Bot](https://github.com/jcommelin/splice-pr)*');
+    // Machine-readable metadata for post-merge callbacks
+    const metadata = {
+        'splice-bot': {
+            'original-pr': originalPrNumber,
+            'comment-id': commentId,
+        },
+    };
+    parts.push('', '---', '*Created by [Splice Bot](https://github.com/jcommelin/splice-pr)*', `<!-- ${JSON.stringify(metadata)} -->`);
     return parts.join('\n');
 }
 

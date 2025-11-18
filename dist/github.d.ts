@@ -43,6 +43,10 @@ export declare function checkForConflicts(octokit: Octokit, owner: string, repo:
  */
 export declare function replyToComment(octokit: Octokit, owner: string, repo: string, prNumber: number, commentId: number, message: string): Promise<void>;
 /**
+ * Create a comment on a PR/issue
+ */
+export declare function createIssueComment(octokit: Octokit, owner: string, repo: string, issueNumber: number, body: string): Promise<void>;
+/**
  * Check if a branch exists
  */
 export declare function branchExists(octokit: Octokit, owner: string, repo: string, branchName: string): Promise<boolean>;

@@ -3,12 +3,16 @@ name: Splice Bot
 on:
   pull_request_review_comment:
     types: [created]
+  pull_request:
+    types: [closed]
 
 jobs:
   splice:
     runs-on: ubuntu-latest
-    # Only run if comment contains splice-bot
-    if: contains(github.event.comment.body, 'splice-bot')
+    # Only run for splice-bot comments or merged splice PRs
+    if: |
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, 'splice-bot')) ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
 
     permissions:
       contents: write

@@ -291,6 +291,24 @@ export async function replyToComment(
 }
 
 /**
+ * Create a comment on a PR/issue
+ */
+export async function createIssueComment(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  body: string
+): Promise<void> {
+  await octokit.rest.issues.createComment({
+    owner,
+    repo,
+    issue_number: issueNumber,
+    body,
+  });
+}
+
+/**
  * Check if a branch exists
  */
 export async function branchExists(
