@@ -30123,7 +30123,8 @@ async function getFileContent(octokit, owner, repo, path, ref) {
  * Apply a diff hunk to base content to get the new content
  */
 function applyHunk(baseContent, hunk) {
-    const baseLines = baseContent.split('\n');
+    // Handle empty base content (new files)
+    const baseLines = baseContent === '' ? [] : baseContent.split('\n');
     const hunkLines = hunk.content.split('\n');
     // Remove the hunk header
     const patchLines = hunkLines.slice(1);
@@ -30261,12 +30262,11 @@ async function commitChanges(octokit, owner, repo, branchName, changes, baseBran
     // Get the base tree
     const baseTreeSha = await getTreeSha(octokit, owner, repo, baseSha);
     // Get the original file content from base
+    // For new files, baseContent will be null - start with empty string
     const baseContent = await (0, diff_1.getFileContent)(octokit, owner, repo, changes.path, baseBranch);
-    if (baseContent === null) {
-        throw new Error(`Could not get base content for ${changes.path}`);
-    }
     // Apply all hunks to get the new content
-    let newContent = baseContent;
+    // For new files (baseContent is null), the hunk contains only additions
+    let newContent = baseContent || '';
     for (const hunk of changes.hunks) {
         newContent = (0, diff_1.applyHunk)(newContent, hunk);
     }

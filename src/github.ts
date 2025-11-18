@@ -115,13 +115,12 @@ export async function commitChanges(
   const baseTreeSha = await getTreeSha(octokit, owner, repo, baseSha);
 
   // Get the original file content from base
+  // For new files, baseContent will be null - start with empty string
   const baseContent = await getFileContent(octokit, owner, repo, changes.path, baseBranch);
-  if (baseContent === null) {
-    throw new Error(`Could not get base content for ${changes.path}`);
-  }
 
   // Apply all hunks to get the new content
-  let newContent = baseContent;
+  // For new files (baseContent is null), the hunk contains only additions
+  let newContent = baseContent || '';
   for (const hunk of changes.hunks) {
     newContent = applyHunk(newContent, hunk);
   }

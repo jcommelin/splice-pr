@@ -232,7 +232,8 @@ export async function getFileContent(
  * Apply a diff hunk to base content to get the new content
  */
 export function applyHunk(baseContent: string, hunk: DiffHunk): string {
-  const baseLines = baseContent.split('\n');
+  // Handle empty base content (new files)
+  const baseLines = baseContent === '' ? [] : baseContent.split('\n');
   const hunkLines = hunk.content.split('\n');
 
   // Remove the hunk header
