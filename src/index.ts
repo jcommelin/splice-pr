@@ -10,6 +10,9 @@ import {
   replyToComment,
   branchExists,
   deleteBranch,
+  addLabels,
+  requestReviewers,
+  checkForConflicts,
 } from './github';
 import { CommentContext, SpliceResult } from './types';
 
@@ -112,8 +115,8 @@ async function splice(
     // Determine the base branch
     const baseBranch = instruction?.base || prDetails.baseBranch;
 
-    // Generate branch name
-    const branchName = generateBranchName(prNumber, commitId);
+    // Generate or use custom branch name
+    const branchName = instruction?.branch || generateBranchName(prNumber, commitId);
 
     // Check if branch already exists
     if (await branchExists(octokit, owner, repo, branchName)) {
@@ -144,7 +147,7 @@ async function splice(
     await createBranch(octokit, owner, repo, branchName, baseBranch);
 
     // Generate PR title
-    const prTitle = instruction?.title || generatePrTitle(prDetails.title, path);
+    const prTitle = instruction?.title || generatePrTitle(path);
 
     // Commit the changes
     core.info('Committing changes...');
@@ -161,13 +164,31 @@ async function splice(
       authorEmail
     );
 
-    // Generate PR description
-    const prDescription = generatePrDescription(
-      prNumber,
-      prDetails.title,
+    // Check for potential conflicts
+    core.info('Checking for potential conflicts...');
+    const hasConflicts = await checkForConflicts(
+      octokit,
+      owner,
+      repo,
       path,
-      instruction?.description
+      baseBranch,
+      prDetails.headBranch
     );
+    if (hasConflicts) {
+      core.warning(`File ${path} may have been modified in base branch - conflicts possible`);
+    }
+
+    // Generate PR description
+    const prDescription = generatePrDescription({
+      originalPrNumber: prNumber,
+      originalPrTitle: prDetails.title,
+      path,
+      startLine,
+      endLine,
+      commentId,
+      authorLogin,
+      customDescription: instruction?.description,
+    });
 
     // Create the PR
     core.info('Creating pull request...');
@@ -178,11 +199,27 @@ async function splice(
       prTitle,
       prDescription,
       branchName,
-      baseBranch
+      baseBranch,
+      instruction?.draft || false
     );
 
+    // Add labels if specified
+    if (instruction?.labels && instruction.labels.length > 0) {
+      core.info(`Adding labels: ${instruction.labels.join(', ')}`);
+      await addLabels(octokit, owner, repo, newPr.number, instruction.labels);
+    }
+
+    // Request reviewers if specified
+    if (instruction?.reviewers && instruction.reviewers.length > 0) {
+      core.info(`Requesting reviewers: ${instruction.reviewers.join(', ')}`);
+      await requestReviewers(octokit, owner, repo, newPr.number, instruction.reviewers);
+    }
+
     // Reply to the original comment
-    const successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
+    let successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
+    if (hasConflicts) {
+      successMessage += `\n\n⚠️ **Warning**: The file \`${path}\` may have been modified in the base branch. Please check for conflicts.`;
+    }
     await replyToComment(octokit, owner, repo, prNumber, commentId, successMessage);
 
     return {

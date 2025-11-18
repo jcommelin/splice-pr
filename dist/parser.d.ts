@@ -14,8 +14,18 @@ export declare function generateBranchName(prNumber: number, commitId: string): 
 /**
  * Generate a PR title if not provided
  */
-export declare function generatePrTitle(originalPrTitle: string, path: string): string;
+export declare function generatePrTitle(path: string): string;
+export interface PrDescriptionOptions {
+    originalPrNumber: number;
+    originalPrTitle: string;
+    path: string;
+    startLine: number;
+    endLine: number;
+    commentId: number;
+    authorLogin: string;
+    customDescription?: string;
+}
 /**
  * Generate PR description
  */
-export declare function generatePrDescription(originalPrNumber: number, originalPrTitle: string, path: string, customDescription?: string): string;
+export declare function generatePrDescription(options: PrDescriptionOptions): string;

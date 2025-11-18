@@ -30187,6 +30187,9 @@ exports.getPrDetails = getPrDetails;
 exports.createBranch = createBranch;
 exports.commitChanges = commitChanges;
 exports.createPullRequest = createPullRequest;
+exports.addLabels = addLabels;
+exports.requestReviewers = requestReviewers;
+exports.checkForConflicts = checkForConflicts;
 exports.replyToComment = replyToComment;
 exports.branchExists = branchExists;
 exports.deleteBranch = deleteBranch;
@@ -30311,7 +30314,7 @@ async function commitChanges(octokit, owner, repo, branchName, changes, baseBran
 /**
  * Create a pull request
  */
-async function createPullRequest(octokit, owner, repo, title, body, head, base) {
+async function createPullRequest(octokit, owner, repo, title, body, head, base, draft = false) {
     const { data: pr } = await octokit.rest.pulls.create({
         owner,
         repo,
@@ -30319,11 +30322,57 @@ async function createPullRequest(octokit, owner, repo, title, body, head, base) 
         body,
         head,
         base,
+        draft,
     });
     return {
         number: pr.number,
         url: pr.html_url,
     };
+}
+/**
+ * Add labels to a pull request
+ */
+async function addLabels(octokit, owner, repo, prNumber, labels) {
+    await octokit.rest.issues.addLabels({
+        owner,
+        repo,
+        issue_number: prNumber,
+        labels,
+    });
+}
+/**
+ * Request reviewers for a pull request
+ */
+async function requestReviewers(octokit, owner, repo, prNumber, reviewers) {
+    await octokit.rest.pulls.requestReviewers({
+        owner,
+        repo,
+        pull_number: prNumber,
+        reviewers,
+    });
+}
+/**
+ * Check if changes would conflict with base branch
+ * Returns true if there might be conflicts
+ */
+async function checkForConflicts(octokit, owner, repo, path, baseBranch, prHeadBranch) {
+    try {
+        // Compare the base branch with the PR head to see if the file was modified
+        const { data: comparison } = await octokit.rest.repos.compareCommits({
+            owner,
+            repo,
+            base: baseBranch,
+            head: prHeadBranch,
+        });
+        // Check if the file exists in both the base branch changes and our splice
+        // This is a simplified check - true conflicts would need actual merge attempt
+        const modifiedInBase = comparison.files?.some(f => f.filename === path && f.status !== 'added');
+        return modifiedInBase || false;
+    }
+    catch {
+        // If comparison fails, assume no conflicts to avoid blocking
+        return false;
+    }
 }
 /**
  * Reply to the original comment
@@ -30492,8 +30541,8 @@ async function splice(octokit, owner, repo, commentContext, instruction) {
         const prDetails = await (0, github_1.getPrDetails)(octokit, owner, repo, prNumber);
         // Determine the base branch
         const baseBranch = instruction?.base || prDetails.baseBranch;
-        // Generate branch name
-        const branchName = (0, parser_1.generateBranchName)(prNumber, commitId);
+        // Generate or use custom branch name
+        const branchName = instruction?.branch || (0, parser_1.generateBranchName)(prNumber, commitId);
         // Check if branch already exists
         if (await (0, github_1.branchExists)(octokit, owner, repo, branchName)) {
             core.info(`Branch ${branchName} already exists, deleting...`);
@@ -30512,17 +30561,45 @@ async function splice(octokit, owner, repo, commentContext, instruction) {
         core.info(`Creating branch ${branchName}...`);
         await (0, github_1.createBranch)(octokit, owner, repo, branchName, baseBranch);
         // Generate PR title
-        const prTitle = instruction?.title || (0, parser_1.generatePrTitle)(prDetails.title, path);
+        const prTitle = instruction?.title || (0, parser_1.generatePrTitle)(path);
         // Commit the changes
         core.info('Committing changes...');
         await (0, github_1.commitChanges)(octokit, owner, repo, branchName, changes, baseBranch, prTitle, prNumber, authorLogin, authorEmail);
+        // Check for potential conflicts
+        core.info('Checking for potential conflicts...');
+        const hasConflicts = await (0, github_1.checkForConflicts)(octokit, owner, repo, path, baseBranch, prDetails.headBranch);
+        if (hasConflicts) {
+            core.warning(`File ${path} may have been modified in base branch - conflicts possible`);
+        }
         // Generate PR description
-        const prDescription = (0, parser_1.generatePrDescription)(prNumber, prDetails.title, path, instruction?.description);
+        const prDescription = (0, parser_1.generatePrDescription)({
+            originalPrNumber: prNumber,
+            originalPrTitle: prDetails.title,
+            path,
+            startLine,
+            endLine,
+            commentId,
+            authorLogin,
+            customDescription: instruction?.description,
+        });
         // Create the PR
         core.info('Creating pull request...');
-        const newPr = await (0, github_1.createPullRequest)(octokit, owner, repo, prTitle, prDescription, branchName, baseBranch);
+        const newPr = await (0, github_1.createPullRequest)(octokit, owner, repo, prTitle, prDescription, branchName, baseBranch, instruction?.draft || false);
+        // Add labels if specified
+        if (instruction?.labels && instruction.labels.length > 0) {
+            core.info(`Adding labels: ${instruction.labels.join(', ')}`);
+            await (0, github_1.addLabels)(octokit, owner, repo, newPr.number, instruction.labels);
+        }
+        // Request reviewers if specified
+        if (instruction?.reviewers && instruction.reviewers.length > 0) {
+            core.info(`Requesting reviewers: ${instruction.reviewers.join(', ')}`);
+            await (0, github_1.requestReviewers)(octokit, owner, repo, newPr.number, instruction.reviewers);
+        }
         // Reply to the original comment
-        const successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
+        let successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
+        if (hasConflicts) {
+            successMessage += `\n\n⚠️ **Warning**: The file \`${path}\` may have been modified in the base branch. Please check for conflicts.`;
+        }
         await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, commentId, successMessage);
         return {
             success: true,
@@ -30581,6 +30658,10 @@ function parseInstruction(body) {
         instruction.title = simpleTitle[1];
         return instruction;
     }
+    // Check for --draft flag
+    if (/--draft\b/i.test(args)) {
+        instruction.draft = true;
+    }
     // Structured format: key:value or key:"value with spaces"
     const keyValuePattern = /(\w+):(?:"([^"]+)"|(\S+))/g;
     let keyMatch;
@@ -30600,6 +30681,16 @@ function parseInstruction(body) {
             case 'description':
                 instruction.description = value;
                 break;
+            case 'labels':
+                instruction.labels = value.split(',').map(l => l.trim());
+                break;
+            case 'reviewers':
+                // Remove @ prefix if present
+                instruction.reviewers = value.split(',').map(r => r.trim().replace(/^@/, ''));
+                break;
+            case 'branch':
+                instruction.branch = value;
+                break;
         }
     }
     return instruction;
@@ -30614,25 +30705,26 @@ function generateBranchName(prNumber, commitId) {
 /**
  * Generate a PR title if not provided
  */
-function generatePrTitle(originalPrTitle, path) {
+function generatePrTitle(path) {
     const fileName = path.split('/').pop() || path;
     return `[Splice] Extract changes from ${fileName}`;
 }
 /**
  * Generate PR description
  */
-function generatePrDescription(originalPrNumber, originalPrTitle, path, customDescription) {
+function generatePrDescription(options) {
+    const { originalPrNumber, originalPrTitle, path, startLine, endLine, commentId, authorLogin, customDescription, } = options;
+    const lineRange = startLine === endLine ? `line ${endLine}` : `lines ${startLine}-${endLine}`;
     const parts = [
-        `## Spliced from #${originalPrNumber}`,
+        `Spliced from #${originalPrNumber} (${originalPrTitle})`,
         '',
-        `This PR was automatically created by Splice Bot, extracting changes from:`,
-        `- **Original PR**: #${originalPrNumber} - ${originalPrTitle}`,
-        `- **File**: \`${path}\``,
+        `- **File**: \`${path}\` at ${lineRange}`,
+        `- **Requested by**: @${authorLogin} ([view comment](../pull/${originalPrNumber}#discussion_r${commentId}))`,
     ];
     if (customDescription) {
-        parts.push('', '## Description', '', customDescription);
+        parts.push('', customDescription);
     }
-    parts.push('', '---', '*Created by [Splice Bot](https://github.com/your-org/splice-bot-action)*');
+    parts.push('', '---', '*Created by [Splice Bot](https://github.com/jcommelin/splice-pr)*');
     return parts.join('\n');
 }
 

@@ -180,7 +180,8 @@ export async function createPullRequest(
   title: string,
   body: string,
   head: string,
-  base: string
+  base: string,
+  draft: boolean = false
 ): Promise<{ number: number; url: string }> {
   const { data: pr } = await octokit.rest.pulls.create({
     owner,
@@ -189,12 +190,83 @@ export async function createPullRequest(
     body,
     head,
     base,
+    draft,
   });
 
   return {
     number: pr.number,
     url: pr.html_url,
   };
+}
+
+/**
+ * Add labels to a pull request
+ */
+export async function addLabels(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  labels: string[]
+): Promise<void> {
+  await octokit.rest.issues.addLabels({
+    owner,
+    repo,
+    issue_number: prNumber,
+    labels,
+  });
+}
+
+/**
+ * Request reviewers for a pull request
+ */
+export async function requestReviewers(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  reviewers: string[]
+): Promise<void> {
+  await octokit.rest.pulls.requestReviewers({
+    owner,
+    repo,
+    pull_number: prNumber,
+    reviewers,
+  });
+}
+
+/**
+ * Check if changes would conflict with base branch
+ * Returns true if there might be conflicts
+ */
+export async function checkForConflicts(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  path: string,
+  baseBranch: string,
+  prHeadBranch: string
+): Promise<boolean> {
+  try {
+    // Compare the base branch with the PR head to see if the file was modified
+    const { data: comparison } = await octokit.rest.repos.compareCommits({
+      owner,
+      repo,
+      base: baseBranch,
+      head: prHeadBranch,
+    });
+
+    // Check if the file exists in both the base branch changes and our splice
+    // This is a simplified check - true conflicts would need actual merge attempt
+    const modifiedInBase = comparison.files?.some(
+      f => f.filename === path && f.status !== 'added'
+    );
+
+    return modifiedInBase || false;
+  } catch {
+    // If comparison fails, assume no conflicts to avoid blocking
+    return false;
+  }
 }
 
 /**

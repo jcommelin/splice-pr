@@ -27,6 +27,11 @@ export function parseInstruction(body: string): SpliceInstruction | null {
     return instruction;
   }
 
+  // Check for --draft flag
+  if (/--draft\b/i.test(args)) {
+    instruction.draft = true;
+  }
+
   // Structured format: key:value or key:"value with spaces"
   const keyValuePattern = /(\w+):(?:"([^"]+)"|(\S+))/g;
   let keyMatch;
@@ -48,6 +53,16 @@ export function parseInstruction(body: string): SpliceInstruction | null {
       case 'description':
         instruction.description = value;
         break;
+      case 'labels':
+        instruction.labels = value.split(',').map(l => l.trim());
+        break;
+      case 'reviewers':
+        // Remove @ prefix if present
+        instruction.reviewers = value.split(',').map(r => r.trim().replace(/^@/, ''));
+        break;
+      case 'branch':
+        instruction.branch = value;
+        break;
     }
   }
 
@@ -65,36 +80,54 @@ export function generateBranchName(prNumber: number, commitId: string): string {
 /**
  * Generate a PR title if not provided
  */
-export function generatePrTitle(originalPrTitle: string, path: string): string {
+export function generatePrTitle(path: string): string {
   const fileName = path.split('/').pop() || path;
   return `[Splice] Extract changes from ${fileName}`;
+}
+
+export interface PrDescriptionOptions {
+  originalPrNumber: number;
+  originalPrTitle: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  commentId: number;
+  authorLogin: string;
+  customDescription?: string;
 }
 
 /**
  * Generate PR description
  */
-export function generatePrDescription(
-  originalPrNumber: number,
-  originalPrTitle: string,
-  path: string,
-  customDescription?: string
-): string {
+export function generatePrDescription(options: PrDescriptionOptions): string {
+  const {
+    originalPrNumber,
+    originalPrTitle,
+    path,
+    startLine,
+    endLine,
+    commentId,
+    authorLogin,
+    customDescription,
+  } = options;
+
+  const lineRange = startLine === endLine ? `line ${endLine}` : `lines ${startLine}-${endLine}`;
+
   const parts = [
-    `## Spliced from #${originalPrNumber}`,
+    `Spliced from #${originalPrNumber} (${originalPrTitle})`,
     '',
-    `This PR was automatically created by Splice Bot, extracting changes from:`,
-    `- **Original PR**: #${originalPrNumber} - ${originalPrTitle}`,
-    `- **File**: \`${path}\``,
+    `- **File**: \`${path}\` at ${lineRange}`,
+    `- **Requested by**: @${authorLogin} ([view comment](../pull/${originalPrNumber}#discussion_r${commentId}))`,
   ];
 
   if (customDescription) {
-    parts.push('', '## Description', '', customDescription);
+    parts.push('', customDescription);
   }
 
   parts.push(
     '',
     '---',
-    '*Created by [Splice Bot](https://github.com/your-org/splice-bot-action)*'
+    '*Created by [Splice Bot](https://github.com/jcommelin/splice-pr)*'
   );
 
   return parts.join('\n');

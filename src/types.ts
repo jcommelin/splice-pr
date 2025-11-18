@@ -3,6 +3,10 @@ export interface SpliceInstruction {
   group?: string;
   base?: string;
   description?: string;
+  labels?: string[];
+  reviewers?: string[];
+  draft?: boolean;
+  branch?: string;
 }
 
 export interface CommentContext {
