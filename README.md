@@ -6,33 +6,7 @@ Extract selected lines from a pull request and create a new focused PR.
 
 ### 1. Add the workflow
 
-Create `.github/workflows/splice-bot.yml`:
-
-```yaml
-name: Splice Bot
-
-on:
-  pull_request_review_comment:
-    types: [created]
-
-jobs:
-  splice:
-    runs-on: ubuntu-latest
-    if: contains(github.event.comment.body, 'splice-bot')
-
-    permissions:
-      contents: write
-      pull-requests: write
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: your-org/splice-bot-action@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-```
+Copy [`.github/workflows/splice-bot.yml`](.github/workflows/splice-bot.yml) to your repository, changing `uses: ./` to `uses: jcommelin/splice-pr@master`.
 
 ### 2. Enable repository permissions
 
