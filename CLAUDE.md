@@ -28,7 +28,7 @@ src/
 
 1. **Line selection**: Extracts only selected lines plus adjacent deletions, not full hunks
 2. **Base branch**: Defaults to original PR's base, configurable via `base:` option
-3. **Branch naming**: `splice/pr-{number}-{commit-short-hash}`
+3. **Branch naming**: `splice/pr-{number}-{commentId}` (uses comment ID for uniqueness)
 4. **Commit strategy**: Single clean commit with author from comment
 
 ## Future Enhancements
@@ -122,32 +122,32 @@ Merge base branch into original PR's head branch.
 
 Alternative approaches preserved for future consideration (may add automation later).
 
-### Additional Features (v2)
+### Additional Features (v2) ✅ IMPLEMENTED
 
-#### PR Creation Options
+#### PR Creation Options ✅
 ```
 splice-bot labels:bug,urgent reviewers:@alice,@bob --draft branch:fix/auth-bug
 ```
 
-- **labels**: Auto-assign labels to the new PR
-- **reviewers**: Auto-assign reviewers to the new PR
-- **--draft**: Create as draft PR
-- **branch**: Custom branch name (override auto-generated)
+- **labels**: Auto-assign labels to the new PR ✅
+- **reviewers**: Auto-assign reviewers to the new PR ✅
+- **--draft**: Create as draft PR ✅
+- **branch**: Custom branch name (override auto-generated) ✅
 
-#### Conflict Preview
+#### Conflict Preview ✅
 Before creating the PR, check if changes would conflict with current base branch. Include warning in reply if conflicts are likely.
 
 **Implementation**:
-- After extracting changes, attempt a test merge
+- After extracting changes, compare branches to check for changes to same file
 - If conflicts detected, warn in reply but still create PR
 - User can then resolve conflicts in the new PR
 
-#### Improved PR Description
-Update the generated PR description to include:
+#### Improved PR Description ✅
+Updated the generated PR description to include:
 - Link back to original PR and specific comment
-- Original PR author mention
+- Requesting user mention (@author)
 - File path and line range
-- Timestamp of splice
+- Custom description support
 
 ### Deferred Features
 - Duplicate detection (prevent same selection being spliced twice)
@@ -162,7 +162,32 @@ npm test        # Run Jest tests
 npm run build   # Build for distribution
 ```
 
-Test repository: Created separate repo to test end-to-end workflow.
+### End-to-End Testing with `gh`
+
+Create review comments using `gh api` with JSON input:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews \
+  --method POST \
+  --input - <<EOF
+{
+  "event": "COMMENT",
+  "body": "Testing splice-bot",
+  "comments": [
+    {
+      "path": "example.js",
+      "start_line": 14,
+      "line": 17,
+      "body": "splice-bot title:\"My title\" labels:bug,enhancement reviewers:alice --draft branch:custom-name"
+    }
+  ]
+}
+EOF
+```
+
+Use `start_line` + `line` for multi-line selections, or just `line` for single-line.
+
+Verify results with `gh pr view {pr_number} --json labels,reviewRequests,isDraft`.
 
 ## Known Limitations
 

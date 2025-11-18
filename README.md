@@ -53,6 +53,10 @@ Go to **Settings** > **Actions** > **General** > **Workflow permissions**:
 splice-bot                              # Basic usage
 splice-bot "Fix typo in docs"           # Custom PR title
 splice-bot title:"Fix bug" base:main    # Structured options
+splice-bot labels:bug,urgent --draft    # Labels and draft PR
+splice-bot reviewers:alice,bob          # Request reviewers
+splice-bot --entire-hunk                # Extract full hunk
+splice-bot --entire-file                # Extract all file changes
 ```
 
 | Option | Description |
@@ -60,6 +64,12 @@ splice-bot title:"Fix bug" base:main    # Structured options
 | `title` | Custom PR title |
 | `base` | Base branch (defaults to original PR's base) |
 | `description` | Custom PR description |
+| `labels` | Comma-separated labels to add |
+| `reviewers` | Comma-separated usernames (@ optional) |
+| `branch` | Custom branch name |
+| `--draft` | Create as draft PR |
+| `--entire-hunk` | Extract the complete hunk containing the comment |
+| `--entire-file` | Extract all changes from the file |
 
 ## How It Works
 

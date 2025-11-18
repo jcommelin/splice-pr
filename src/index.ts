@@ -1,7 +1,8 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { parseInstruction, generateBranchName, generatePrTitle, generatePrDescription } from './parser';
-import { extractChanges } from './diff';
+import { extractChanges, getFileDiff, extractEntireHunkForLine, extractAllHunks } from './diff';
+import { ExtractedChange } from './types';
 import {
   getPrDetails,
   createBranch,
@@ -124,13 +125,38 @@ async function splice(
       await deleteBranch(octokit, owner, repo, branchName);
     }
 
-    // Extract the changes
+    // Extract the changes based on mode
+    let changes: ExtractedChange | null = null;
+    let extractionMode = 'lines';
     const lineRange = startLine === endLine ? `line ${endLine}` : `lines ${startLine}-${endLine}`;
-    core.info(`Extracting changes from ${path} at ${lineRange}...`);
-    const changes = await extractChanges(octokit, owner, repo, prNumber, path, startLine, endLine);
+
+    if (instruction?.entireFile) {
+      extractionMode = 'entire file';
+      core.info(`Extracting entire file changes from ${path}...`);
+      const patch = await getFileDiff(octokit, owner, repo, prNumber, path);
+      if (patch) {
+        const hunks = extractAllHunks(patch);
+        if (hunks.length > 0) {
+          changes = { path, hunks };
+        }
+      }
+    } else if (instruction?.entireHunk) {
+      extractionMode = 'entire hunk';
+      core.info(`Extracting entire hunk from ${path} containing ${lineRange}...`);
+      const patch = await getFileDiff(octokit, owner, repo, prNumber, path);
+      if (patch) {
+        const hunk = extractEntireHunkForLine(patch, endLine);
+        if (hunk) {
+          changes = { path, hunks: [hunk] };
+        }
+      }
+    } else {
+      core.info(`Extracting changes from ${path} at ${lineRange}...`);
+      changes = await extractChanges(octokit, owner, repo, prNumber, path, startLine, endLine);
+    }
 
     if (!changes) {
-      const errorMessage = `Could not extract changes from ${path} at ${lineRange}. The file may not have changes at this location.`;
+      const errorMessage = `Could not extract changes from ${path} (${extractionMode}). The file may not have changes at this location.`;
       await replyToComment(
         octokit,
         owner,

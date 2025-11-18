@@ -29929,6 +29929,8 @@ function wrappy (fn, cb) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.extractHunkForLineRange = extractHunkForLineRange;
+exports.extractEntireHunkForLine = extractEntireHunkForLine;
+exports.extractAllHunks = extractAllHunks;
 exports.getFileDiff = getFileDiff;
 exports.getFileContent = getFileContent;
 exports.applyHunk = applyHunk;
@@ -30083,6 +30085,109 @@ function extractHunkForLineRange(filePatch, startLine, endLine) {
         newLines: newLinesCount,
         content,
     };
+}
+/**
+ * Extract the entire hunk containing a specific line
+ */
+function extractEntireHunkForLine(filePatch, line) {
+    const lines = filePatch.split('\n');
+    const hunks = [];
+    let currentHunk = null;
+    let currentNewLine = 0;
+    for (const patchLine of lines) {
+        const header = parseHunkHeader(patchLine);
+        if (header) {
+            if (currentHunk) {
+                hunks.push(currentHunk);
+            }
+            currentHunk = {
+                header: patchLine,
+                lines: [],
+                oldStart: header.oldStart,
+                oldLines: header.oldLines,
+                newStart: header.newStart,
+                newLines: header.newLines,
+                newLineStart: header.newStart,
+                newLineEnd: header.newStart,
+            };
+            currentNewLine = header.newStart;
+            continue;
+        }
+        if (!currentHunk)
+            continue;
+        currentHunk.lines.push(patchLine);
+        if (patchLine.startsWith('+')) {
+            currentHunk.newLineEnd = currentNewLine;
+            currentNewLine++;
+        }
+        else if (patchLine.startsWith('-')) {
+            // Deletions don't have new line numbers
+        }
+        else {
+            // Context line
+            currentHunk.newLineEnd = currentNewLine;
+            currentNewLine++;
+        }
+    }
+    if (currentHunk) {
+        hunks.push(currentHunk);
+    }
+    // Find the hunk containing the target line
+    const targetHunk = hunks.find(h => line >= h.newLineStart && line <= h.newLineEnd);
+    if (!targetHunk) {
+        return null;
+    }
+    const content = [targetHunk.header, ...targetHunk.lines].join('\n');
+    return {
+        oldStart: targetHunk.oldStart,
+        oldLines: targetHunk.oldLines,
+        newStart: targetHunk.newStart,
+        newLines: targetHunk.newLines,
+        content,
+    };
+}
+/**
+ * Extract all hunks from a file's patch (for entire-file extraction)
+ */
+function extractAllHunks(filePatch) {
+    const lines = filePatch.split('\n');
+    const hunks = [];
+    let currentHeader = null;
+    let currentLines = [];
+    let headerLine = '';
+    for (const patchLine of lines) {
+        const header = parseHunkHeader(patchLine);
+        if (header) {
+            // Save previous hunk if exists
+            if (currentHeader && currentLines.length > 0) {
+                hunks.push({
+                    oldStart: currentHeader.oldStart,
+                    oldLines: currentHeader.oldLines,
+                    newStart: currentHeader.newStart,
+                    newLines: currentHeader.newLines,
+                    content: [headerLine, ...currentLines].join('\n'),
+                });
+            }
+            currentHeader = header;
+            headerLine = patchLine;
+            currentLines = [];
+            continue;
+        }
+        if (currentHeader) {
+            currentLines.push(patchLine);
+        }
+    }
+    // Save last hunk
+    if (currentHeader && currentLines.length > 0) {
+        hunks.push({
+            oldStart: currentHeader.oldStart,
+            oldLines: currentHeader.oldLines,
+            newStart: currentHeader.newStart,
+            newLines: currentHeader.newLines,
+            content: [headerLine, ...currentLines].join('\n'),
+        });
+    }
+    return hunks;
 }
 /**
  * Get the file diff from a PR
@@ -30548,12 +30653,38 @@ async function splice(octokit, owner, repo, commentContext, instruction) {
             core.info(`Branch ${branchName} already exists, deleting...`);
             await (0, github_1.deleteBranch)(octokit, owner, repo, branchName);
         }
-        // Extract the changes
+        // Extract the changes based on mode
+        let changes = null;
+        let extractionMode = 'lines';
         const lineRange = startLine === endLine ? `line ${endLine}` : `lines ${startLine}-${endLine}`;
-        core.info(`Extracting changes from ${path} at ${lineRange}...`);
-        const changes = await (0, diff_1.extractChanges)(octokit, owner, repo, prNumber, path, startLine, endLine);
+        if (instruction?.entireFile) {
+            extractionMode = 'entire file';
+            core.info(`Extracting entire file changes from ${path}...`);
+            const patch = await (0, diff_1.getFileDiff)(octokit, owner, repo, prNumber, path);
+            if (patch) {
+                const hunks = (0, diff_1.extractAllHunks)(patch);
+                if (hunks.length > 0) {
+                    changes = { path, hunks };
+                }
+            }
+        }
+        else if (instruction?.entireHunk) {
+            extractionMode = 'entire hunk';
+            core.info(`Extracting entire hunk from ${path} containing ${lineRange}...`);
+            const patch = await (0, diff_1.getFileDiff)(octokit, owner, repo, prNumber, path);
+            if (patch) {
+                const hunk = (0, diff_1.extractEntireHunkForLine)(patch, endLine);
+                if (hunk) {
+                    changes = { path, hunks: [hunk] };
+                }
+            }
+        }
+        else {
+            core.info(`Extracting changes from ${path} at ${lineRange}...`);
+            changes = await (0, diff_1.extractChanges)(octokit, owner, repo, prNumber, path, startLine, endLine);
+        }
         if (!changes) {
-            const errorMessage = `Could not extract changes from ${path} at ${lineRange}. The file may not have changes at this location.`;
+            const errorMessage = `Could not extract changes from ${path} (${extractionMode}). The file may not have changes at this location.`;
             await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, commentId, `❌ **Splice Bot Error**\n\n${errorMessage}`);
             return { success: false, error: errorMessage };
         }
@@ -30658,9 +30789,15 @@ function parseInstruction(body) {
         instruction.title = simpleTitle[1];
         return instruction;
     }
-    // Check for --draft flag
+    // Check for flags
     if (/--draft\b/i.test(args)) {
         instruction.draft = true;
+    }
+    if (/--entire-hunk\b/i.test(args)) {
+        instruction.entireHunk = true;
+    }
+    if (/--entire-file\b/i.test(args)) {
+        instruction.entireFile = true;
     }
     // Structured format: key:value or key:"value with spaces"
     const keyValuePattern = /(\w+):(?:"([^"]+)"|(\S+))/g;

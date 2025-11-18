@@ -6,6 +6,14 @@ type Octokit = InstanceType<typeof GitHub>;
  */
 export declare function extractHunkForLineRange(filePatch: string, startLine: number, endLine: number): DiffHunk | null;
 /**
+ * Extract the entire hunk containing a specific line
+ */
+export declare function extractEntireHunkForLine(filePatch: string, line: number): DiffHunk | null;
+/**
+ * Extract all hunks from a file's patch (for entire-file extraction)
+ */
+export declare function extractAllHunks(filePatch: string): DiffHunk[];
+/**
  * Get the file diff from a PR
  */
 export declare function getFileDiff(octokit: Octokit, owner: string, repo: string, prNumber: number, filePath: string): Promise<string | null>;

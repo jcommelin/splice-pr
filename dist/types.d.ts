@@ -7,6 +7,8 @@ export interface SpliceInstruction {
     reviewers?: string[];
     draft?: boolean;
     branch?: string;
+    entireHunk?: boolean;
+    entireFile?: boolean;
 }
 export interface CommentContext {
     commentId: number;

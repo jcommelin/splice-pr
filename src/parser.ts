@@ -27,9 +27,15 @@ export function parseInstruction(body: string): SpliceInstruction | null {
     return instruction;
   }
 
-  // Check for --draft flag
+  // Check for flags
   if (/--draft\b/i.test(args)) {
     instruction.draft = true;
+  }
+  if (/--entire-hunk\b/i.test(args)) {
+    instruction.entireHunk = true;
+  }
+  if (/--entire-file\b/i.test(args)) {
+    instruction.entireFile = true;
   }
 
   // Structured format: key:value or key:"value with spaces"

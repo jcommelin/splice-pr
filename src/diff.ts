@@ -177,6 +177,123 @@ export function extractHunkForLineRange(filePatch: string, startLine: number, en
 }
 
 /**
+ * Extract the entire hunk containing a specific line
+ */
+export function extractEntireHunkForLine(filePatch: string, line: number): DiffHunk | null {
+  const lines = filePatch.split('\n');
+  const hunks: { header: string; lines: string[]; oldStart: number; oldLines: number; newStart: number; newLines: number; newLineStart: number; newLineEnd: number }[] = [];
+
+  let currentHunk: typeof hunks[0] | null = null;
+  let currentNewLine = 0;
+
+  for (const patchLine of lines) {
+    const header = parseHunkHeader(patchLine);
+    if (header) {
+      if (currentHunk) {
+        hunks.push(currentHunk);
+      }
+      currentHunk = {
+        header: patchLine,
+        lines: [],
+        oldStart: header.oldStart,
+        oldLines: header.oldLines,
+        newStart: header.newStart,
+        newLines: header.newLines,
+        newLineStart: header.newStart,
+        newLineEnd: header.newStart,
+      };
+      currentNewLine = header.newStart;
+      continue;
+    }
+
+    if (!currentHunk) continue;
+
+    currentHunk.lines.push(patchLine);
+
+    if (patchLine.startsWith('+')) {
+      currentHunk.newLineEnd = currentNewLine;
+      currentNewLine++;
+    } else if (patchLine.startsWith('-')) {
+      // Deletions don't have new line numbers
+    } else {
+      // Context line
+      currentHunk.newLineEnd = currentNewLine;
+      currentNewLine++;
+    }
+  }
+
+  if (currentHunk) {
+    hunks.push(currentHunk);
+  }
+
+  // Find the hunk containing the target line
+  const targetHunk = hunks.find(h => line >= h.newLineStart && line <= h.newLineEnd);
+  if (!targetHunk) {
+    return null;
+  }
+
+  const content = [targetHunk.header, ...targetHunk.lines].join('\n');
+
+  return {
+    oldStart: targetHunk.oldStart,
+    oldLines: targetHunk.oldLines,
+    newStart: targetHunk.newStart,
+    newLines: targetHunk.newLines,
+    content,
+  };
+}
+
+/**
+ * Extract all hunks from a file's patch (for entire-file extraction)
+ */
+export function extractAllHunks(filePatch: string): DiffHunk[] {
+  const lines = filePatch.split('\n');
+  const hunks: DiffHunk[] = [];
+
+  let currentHeader: { oldStart: number; oldLines: number; newStart: number; newLines: number } | null = null;
+  let currentLines: string[] = [];
+  let headerLine = '';
+
+  for (const patchLine of lines) {
+    const header = parseHunkHeader(patchLine);
+    if (header) {
+      // Save previous hunk if exists
+      if (currentHeader && currentLines.length > 0) {
+        hunks.push({
+          oldStart: currentHeader.oldStart,
+          oldLines: currentHeader.oldLines,
+          newStart: currentHeader.newStart,
+          newLines: currentHeader.newLines,
+          content: [headerLine, ...currentLines].join('\n'),
+        });
+      }
+
+      currentHeader = header;
+      headerLine = patchLine;
+      currentLines = [];
+      continue;
+    }
+
+    if (currentHeader) {
+      currentLines.push(patchLine);
+    }
+  }
+
+  // Save last hunk
+  if (currentHeader && currentLines.length > 0) {
+    hunks.push({
+      oldStart: currentHeader.oldStart,
+      oldLines: currentHeader.oldLines,
+      newStart: currentHeader.newStart,
+      newLines: currentHeader.newLines,
+      content: [headerLine, ...currentLines].join('\n'),
+    });
+  }
+
+  return hunks;
+}
+
+/**
  * Get the file diff from a PR
  */
 export async function getFileDiff(
