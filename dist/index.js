@@ -30683,15 +30683,31 @@ async function handleMergeCallback(octokit, owner, repo, context) {
     const originalPrNumber = metadata['splice-bot']['original-pr'];
     const baseBranch = pr.base.ref;
     core.info(`Spliced PR #${pr.number} merged into ${baseBranch}, notifying original PR #${originalPrNumber}`);
+    // Get on-merge configuration
+    const onMergeConfig = core.getInput('on-merge') || 'comment,label';
+    const actions = onMergeConfig.split(',').map(a => a.trim().toLowerCase());
     // Post notification comment on original PR
-    const message = `🔀 Spliced PR #${pr.number} has been merged into \`${baseBranch}\`.\n\nYou may want to merge \`${baseBranch}\` into this PR to incorporate those changes and avoid duplicates.`;
-    try {
-        await (0, github_1.createIssueComment)(octokit, owner, repo, originalPrNumber, message);
-        core.info(`Posted notification to PR #${originalPrNumber}`);
+    if (actions.includes('comment')) {
+        const message = `🔀 Spliced PR #${pr.number} has been merged into \`${baseBranch}\`.\n\nYou may want to merge \`${baseBranch}\` into this PR to incorporate those changes and avoid duplicates.`;
+        try {
+            await (0, github_1.createIssueComment)(octokit, owner, repo, originalPrNumber, message);
+            core.info(`Posted notification to PR #${originalPrNumber}`);
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            core.warning(`Failed to post notification to PR #${originalPrNumber}: ${errorMessage}`);
+        }
     }
-    catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        core.warning(`Failed to post notification to PR #${originalPrNumber}: ${errorMessage}`);
+    // Add needs-sync label to original PR
+    if (actions.includes('label')) {
+        try {
+            await (0, github_1.addLabels)(octokit, owner, repo, originalPrNumber, ['needs-sync']);
+            core.info(`Added 'needs-sync' label to PR #${originalPrNumber}`);
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            core.warning(`Failed to add label to PR #${originalPrNumber}: ${errorMessage}`);
+        }
     }
 }
 /**

@@ -79,55 +79,34 @@ Collect all comments with matching batch ID and create single PR with all change
 
 Alternative approaches preserved for future consideration.
 
-### Post-Merge Sync
+### Post-Merge Sync ✅ IMPLEMENTED
 
 **Problem**: After the spliced PR is merged, the original PR still contains those changes, leading to:
 - Duplicate changes when original PR is merged
 - Potential merge conflicts
 
-**Proposed solutions**:
+**Implemented solutions**:
 
-#### Option A: Comment notification (v3 - implement first)
+#### Comment notification ✅
 Post a comment on the original PR when spliced PR is merged.
-- Pro: Non-invasive, keeps author in control
-- Con: Requires manual action
-- **Simplest to implement, start here**
+- Notifies author to merge base branch into their PR
 
-#### Option B: Add label to original PR (v3)
-Add a label like `needs-rebase` or `spliced-merged` to the original PR.
-- Pro: Visible in PR list, filterable
-- Con: Label must exist in repo
+#### Add label to original PR ✅
+Adds `needs-sync` label to the original PR.
+- Visible in PR list, filterable
 
-#### Option C: Merge base into original PR (v3 - preferred automation)
-Merge base branch into original PR's head branch.
-- Pro: Preserves history, automatic, safe
-- Con: Creates merge commit
-- **Preferred over rebase - doesn't rewrite history**
-
-#### Option D: Automatic rebase (not recommended)
-When spliced PR merges, automatically rebase the original PR.
-- Pro: Clean history
-- Con: Dangerous - can fail, rewrites history, may surprise author
-- **Avoid this approach**
-
-**Implementation approach**:
-1. Add `pull_request.closed` trigger to workflow
-2. Check if `merged == true` and branch matches `splice/pr-*`
-3. Parse original PR number from description ("Spliced from #123")
-4. Execute callback action
-
-**v3 Implementation order**:
-1. Comment notification (simplest, most useful)
-2. Add label to original PR
-3. Merge base into original PR (configurable)
-
-**Configuration** (future):
+#### Configuration
 ```yaml
 - uses: jcommelin/splice-pr@master
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
-    on-merge: comment  # or: label, merge-base
+    on-merge: comment,label  # default: both. Options: comment, label
 ```
+
+**Future: Merge base into original PR**
+Merge base branch into original PR's head branch automatically.
+- Pro: Preserves history, automatic, safe
+- Con: Creates merge commit
 
 ### Additional Features (v2) ✅ IMPLEMENTED
 
