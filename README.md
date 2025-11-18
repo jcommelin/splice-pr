@@ -88,6 +88,18 @@ The action requires the following permissions:
 - `contents: write` - To create branches and commits
 - `pull-requests: write` - To create PRs and reply to comments
 
+### Repository Settings
+
+You must also enable these permissions in your repository settings:
+
+1. Go to **Settings** → **Actions** → **General**
+2. Scroll to **Workflow permissions**
+3. Select **"Read and write permissions"**
+4. Check **"Allow GitHub Actions to create and approve pull requests"**
+5. Click **Save**
+
+Without these settings, the action will fail with a permissions error when trying to create the spliced PR.
+
 ## Development
 
 ### Building
@@ -123,7 +135,6 @@ splice-bot-action/
 ## Limitations
 
 - Currently supports single-file selections only
-- Extracts the full diff hunk, not individual lines
 - Multi-file support (grouped comments) is planned for future releases
 
 ## Error Handling
