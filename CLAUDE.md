@@ -33,29 +33,19 @@ src/
 
 ## Future Enhancements
 
-### Scope Modifiers
+### Scope Modifiers ✅ IMPLEMENTED
 
-#### `entire-file`
+#### `--entire-file` ✅
 ```
-splice-bot entire-file
+splice-bot --entire-file
 ```
-Extract the entire file's changes into a new PR. Can be placed on any line in the file.
+Extract the entire file's changes into a new PR. Extracts all hunks from the file.
 
-**Implementation considerations**:
-- Get all hunks for the file from the PR diff
-- Apply all hunks to create the spliced content
-- Useful when a file represents a self-contained change
-
-#### `entire-hunk`
+#### `--entire-hunk` ✅
 ```
-splice-bot entire-hunk
+splice-bot --entire-hunk
 ```
-Extract the full hunk containing the comment. Can be placed on any line within the hunk.
-
-**Implementation considerations**:
-- Already have hunk boundaries from diff parsing
-- Simpler than `entire-file` - just don't filter lines
-- Good middle ground between line selection and entire file
+Extract the full hunk containing the comment. Good middle ground between line selection and entire file.
 
 ### Batching Multiple Comments
 
@@ -203,3 +193,11 @@ Verify results with `gh pr view {pr_number} --json labels,reviewRequests,isDraft
 - Fixed new file handling
 - Set commit author to comment author
 - Documented repository permission requirements
+
+### Session 2
+- Added v2 features: labels, reviewers, draft PRs, custom branch names
+- Added conflict preview warning
+- Improved PR description format
+- Fixed branch naming to use commentId for uniqueness
+- Added `--entire-hunk` and `--entire-file` scope modifiers
+- Tested all features with `gh api` commands
