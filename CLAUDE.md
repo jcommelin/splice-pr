@@ -87,30 +87,47 @@ Alternative approaches preserved for future consideration.
 
 **Proposed solutions**:
 
-#### Option A: Automatic rebase
-When spliced PR merges, automatically rebase the original PR on its base branch.
-- Pro: Clean history, removes spliced changes
-- Con: Can cause conflicts, may surprise PR author
-
-#### Option B: Comment notification
-Post a comment on the original PR suggesting manual rebase.
+#### Option A: Comment notification (v3 - implement first)
+Post a comment on the original PR when spliced PR is merged.
 - Pro: Non-invasive, keeps author in control
 - Con: Requires manual action
+- **Simplest to implement, start here**
 
-#### Option C: Update base branch
+#### Option B: Add label to original PR (v3)
+Add a label like `needs-rebase` or `spliced-merged` to the original PR.
+- Pro: Visible in PR list, filterable
+- Con: Label must exist in repo
+
+#### Option C: Merge base into original PR (v3 - preferred automation)
 Merge base branch into original PR's head branch.
-- Pro: Preserves history, automatic
-- Con: Creates merge commit, may not remove duplicate code cleanly
+- Pro: Preserves history, automatic, safe
+- Con: Creates merge commit
+- **Preferred over rebase - doesn't rewrite history**
+
+#### Option D: Automatic rebase (not recommended)
+When spliced PR merges, automatically rebase the original PR.
+- Pro: Clean history
+- Con: Dangerous - can fail, rewrites history, may surprise author
+- **Avoid this approach**
 
 **Implementation approach**:
-- Listen for `pull_request.closed` event where `merged == true`
-- Check if PR was created by splice-bot (branch name pattern or PR body marker)
-- Find the original PR (stored in PR description or branch metadata)
-- Execute chosen sync strategy
+1. Add `pull_request.closed` trigger to workflow
+2. Check if `merged == true` and branch matches `splice/pr-*`
+3. Parse original PR number from description ("Spliced from #123")
+4. Execute callback action
 
-**Decision for v2**: Option B (comment notification) - safest, non-invasive, keeps author in control.
+**v3 Implementation order**:
+1. Comment notification (simplest, most useful)
+2. Add label to original PR
+3. Merge base into original PR (configurable)
 
-Alternative approaches preserved for future consideration (may add automation later).
+**Configuration** (future):
+```yaml
+- uses: jcommelin/splice-pr@master
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    on-merge: comment  # or: label, merge-base
+```
 
 ### Additional Features (v2) ✅ IMPLEMENTED
 
