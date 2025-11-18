@@ -1,0 +1,26 @@
+name: Splice Bot
+
+on:
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  splice:
+    runs-on: ubuntu-latest
+    # Only run if comment contains splice-bot
+    if: contains(github.event.comment.body, 'splice-bot')
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Splice Bot
+        uses: ./
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,17 @@
+name: 'Splice Bot'
+description: 'Extract portions of a PR and create new focused PRs from review comments'
+author: 'Your Name'
+
+branding:
+  icon: 'git-pull-request'
+  color: 'purple'
+
+inputs:
+  github-token:
+    description: 'GitHub token for API access'
+    required: true
+    default: ${{ github.token }}
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
