@@ -16,6 +16,8 @@ export interface CommentContext {
   diffHunk: string;
   body: string;
   commitId: string;
+  authorLogin: string;
+  authorEmail: string;
 }
 
 export interface ExtractedChange {

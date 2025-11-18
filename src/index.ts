@@ -51,6 +51,12 @@ async function run(): Promise<void> {
     const endLine = comment.line || comment.original_line;
     const startLine = comment.start_line || endLine;
 
+    // Get author information from the comment
+    const authorLogin = comment.user?.login || 'github-actions[bot]';
+    const authorEmail = comment.user?.id
+      ? `${comment.user.id}+${authorLogin}@users.noreply.github.com`
+      : 'github-actions[bot]@users.noreply.github.com';
+
     const commentContext: CommentContext = {
       commentId: comment.id,
       prNumber: pullRequest.number,
@@ -62,6 +68,8 @@ async function run(): Promise<void> {
       diffHunk: comment.diff_hunk,
       body: comment.body,
       commitId: comment.commit_id,
+      authorLogin,
+      authorEmail,
     };
 
     // Get repository info
@@ -94,7 +102,7 @@ async function splice(
   commentContext: CommentContext,
   instruction: ReturnType<typeof parseInstruction>
 ): Promise<SpliceResult> {
-  const { prNumber, path, startLine, endLine, commentId, commitId } = commentContext;
+  const { prNumber, path, startLine, endLine, commentId, commitId, authorLogin, authorEmail } = commentContext;
 
   try {
     // Get PR details
@@ -148,7 +156,9 @@ async function splice(
       changes,
       baseBranch,
       prTitle,
-      prNumber
+      prNumber,
+      authorLogin,
+      authorEmail
     );
 
     // Generate PR description

@@ -17,7 +17,7 @@ export declare function createBranch(octokit: Octokit, owner: string, repo: stri
 /**
  * Commit changes to the new branch
  */
-export declare function commitChanges(octokit: Octokit, owner: string, repo: string, branchName: string, changes: ExtractedChange, baseBranch: string, commitMessage: string, originalPrNumber: number): Promise<string>;
+export declare function commitChanges(octokit: Octokit, owner: string, repo: string, branchName: string, changes: ExtractedChange, baseBranch: string, commitMessage: string, originalPrNumber: number, authorName: string, authorEmail: string): Promise<string>;
 /**
  * Create a pull request
  */

@@ -101,7 +101,9 @@ export async function commitChanges(
   changes: ExtractedChange,
   baseBranch: string,
   commitMessage: string,
-  originalPrNumber: number
+  originalPrNumber: number,
+  authorName: string,
+  authorEmail: string
 ): Promise<string> {
   // Get the base branch SHA
   const { data: baseRef } = await octokit.rest.git.getRef({
@@ -143,7 +145,7 @@ export async function commitChanges(
     ],
   });
 
-  // Create the commit
+  // Create the commit with the comment author as the commit author
   const fullMessage = `${commitMessage}\n\nSpliced from PR #${originalPrNumber}`;
   const { data: newCommit } = await octokit.rest.git.createCommit({
     owner,
@@ -151,6 +153,10 @@ export async function commitChanges(
     message: fullMessage,
     tree: newTree.sha,
     parents: [baseSha],
+    author: {
+      name: authorName,
+      email: authorEmail,
+    },
   });
 
   // Update the branch reference

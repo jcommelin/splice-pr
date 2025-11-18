@@ -30251,7 +30251,7 @@ async function createBlob(octokit, owner, repo, content) {
 /**
  * Commit changes to the new branch
  */
-async function commitChanges(octokit, owner, repo, branchName, changes, baseBranch, commitMessage, originalPrNumber) {
+async function commitChanges(octokit, owner, repo, branchName, changes, baseBranch, commitMessage, originalPrNumber, authorName, authorEmail) {
     // Get the base branch SHA
     const { data: baseRef } = await octokit.rest.git.getRef({
         owner,
@@ -30286,7 +30286,7 @@ async function commitChanges(octokit, owner, repo, branchName, changes, baseBran
             },
         ],
     });
-    // Create the commit
+    // Create the commit with the comment author as the commit author
     const fullMessage = `${commitMessage}\n\nSpliced from PR #${originalPrNumber}`;
     const { data: newCommit } = await octokit.rest.git.createCommit({
         owner,
@@ -30294,6 +30294,10 @@ async function commitChanges(octokit, owner, repo, branchName, changes, baseBran
         message: fullMessage,
         tree: newTree.sha,
         parents: [baseSha],
+        author: {
+            name: authorName,
+            email: authorEmail,
+        },
     });
     // Update the branch reference
     await octokit.rest.git.updateRef({
@@ -30438,6 +30442,11 @@ async function run() {
         // For single-line comments, start_line is null
         const endLine = comment.line || comment.original_line;
         const startLine = comment.start_line || endLine;
+        // Get author information from the comment
+        const authorLogin = comment.user?.login || 'github-actions[bot]';
+        const authorEmail = comment.user?.id
+            ? `${comment.user.id}+${authorLogin}@users.noreply.github.com`
+            : 'github-actions[bot]@users.noreply.github.com';
         const commentContext = {
             commentId: comment.id,
             prNumber: pullRequest.number,
@@ -30449,6 +30458,8 @@ async function run() {
             diffHunk: comment.diff_hunk,
             body: comment.body,
             commitId: comment.commit_id,
+            authorLogin,
+            authorEmail,
         };
         // Get repository info
         const owner = context.repo.owner;
@@ -30474,7 +30485,7 @@ async function run() {
     }
 }
 async function splice(octokit, owner, repo, commentContext, instruction) {
-    const { prNumber, path, startLine, endLine, commentId, commitId } = commentContext;
+    const { prNumber, path, startLine, endLine, commentId, commitId, authorLogin, authorEmail } = commentContext;
     try {
         // Get PR details
         core.info(`Getting PR #${prNumber} details...`);
@@ -30504,7 +30515,7 @@ async function splice(octokit, owner, repo, commentContext, instruction) {
         const prTitle = instruction?.title || (0, parser_1.generatePrTitle)(prDetails.title, path);
         // Commit the changes
         core.info('Committing changes...');
-        await (0, github_1.commitChanges)(octokit, owner, repo, branchName, changes, baseBranch, prTitle, prNumber);
+        await (0, github_1.commitChanges)(octokit, owner, repo, branchName, changes, baseBranch, prTitle, prNumber, authorLogin, authorEmail);
         // Generate PR description
         const prDescription = (0, parser_1.generatePrDescription)(prNumber, prDetails.title, path, instruction?.description);
         // Create the PR
