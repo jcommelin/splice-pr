@@ -72,9 +72,8 @@ export function parseInstruction(body: string): SpliceInstruction | null {
 /**
  * Generate a branch name for the spliced PR
  */
-export function generateBranchName(prNumber: number, commitId: string): string {
-  const shortHash = commitId.substring(0, 7);
-  return `splice/pr-${prNumber}-${shortHash}`;
+export function generateBranchName(prNumber: number, commentId: number): string {
+  return `splice/pr-${prNumber}-${commentId}`;
 }
 
 /**

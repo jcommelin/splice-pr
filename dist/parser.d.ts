@@ -10,7 +10,7 @@ export declare function parseInstruction(body: string): SpliceInstruction | null
 /**
  * Generate a branch name for the spliced PR
  */
-export declare function generateBranchName(prNumber: number, commitId: string): string;
+export declare function generateBranchName(prNumber: number, commentId: number): string;
 /**
  * Generate a PR title if not provided
  */

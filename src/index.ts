@@ -105,7 +105,7 @@ async function splice(
   commentContext: CommentContext,
   instruction: ReturnType<typeof parseInstruction>
 ): Promise<SpliceResult> {
-  const { prNumber, path, startLine, endLine, commentId, commitId, authorLogin, authorEmail } = commentContext;
+  const { prNumber, path, startLine, endLine, commentId, authorLogin, authorEmail } = commentContext;
 
   try {
     // Get PR details
@@ -116,7 +116,7 @@ async function splice(
     const baseBranch = instruction?.base || prDetails.baseBranch;
 
     // Generate or use custom branch name
-    const branchName = instruction?.branch || generateBranchName(prNumber, commitId);
+    const branchName = instruction?.branch || generateBranchName(prNumber, commentId);
 
     // Check if branch already exists
     if (await branchExists(octokit, owner, repo, branchName)) {

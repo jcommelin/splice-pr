@@ -30534,7 +30534,7 @@ async function run() {
     }
 }
 async function splice(octokit, owner, repo, commentContext, instruction) {
-    const { prNumber, path, startLine, endLine, commentId, commitId, authorLogin, authorEmail } = commentContext;
+    const { prNumber, path, startLine, endLine, commentId, authorLogin, authorEmail } = commentContext;
     try {
         // Get PR details
         core.info(`Getting PR #${prNumber} details...`);
@@ -30542,7 +30542,7 @@ async function splice(octokit, owner, repo, commentContext, instruction) {
         // Determine the base branch
         const baseBranch = instruction?.base || prDetails.baseBranch;
         // Generate or use custom branch name
-        const branchName = instruction?.branch || (0, parser_1.generateBranchName)(prNumber, commitId);
+        const branchName = instruction?.branch || (0, parser_1.generateBranchName)(prNumber, commentId);
         // Check if branch already exists
         if (await (0, github_1.branchExists)(octokit, owner, repo, branchName)) {
             core.info(`Branch ${branchName} already exists, deleting...`);
@@ -30698,9 +30698,8 @@ function parseInstruction(body) {
 /**
  * Generate a branch name for the spliced PR
  */
-function generateBranchName(prNumber, commitId) {
-    const shortHash = commitId.substring(0, 7);
-    return `splice/pr-${prNumber}-${shortHash}`;
+function generateBranchName(prNumber, commentId) {
+    return `splice/pr-${prNumber}-${commentId}`;
 }
 /**
  * Generate a PR title if not provided
