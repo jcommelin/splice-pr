@@ -218,3 +218,58 @@ Verify results with `gh pr view {pr_number} --json labels,reviewRequests,isDraft
 - Fixed branch naming to use commentId for uniqueness
 - Added `--entire-hunk` and `--entire-file` scope modifiers
 - Tested all features with `gh api` commands
+
+### Session 3
+- Implemented post-merge callback: notification comment on original PR ✅
+- Added JSON metadata footer to PR descriptions for parsing
+- Added configurable `on-merge` input for comment/label actions
+- Created `dev` branch workflow for testing before release to master
+
+## Open TODOs
+
+### High Priority
+
+#### 1. Debug `needs-sync` label not being added
+The label feature was implemented but the label is not appearing on the original PR after merge.
+- **Branch**: `feature/on-merge-label` (commit 8cf8097)
+- **Test PR**: #6 should have received the label when PR #7 was merged
+- **Action**: Check workflow logs for run 19493949230 to see if `addLabels` failed or was skipped
+- **Code location**: [index.ts:176-184](src/index.ts#L176-L184) - label addition logic
+
+#### 2. Debug line extraction bug
+When creating a review comment on line 4 of a new file, the wrong content was extracted.
+- **Example**: PR #3 - comment on line 4 (`export const baz = 3;`) extracted line 1 content
+- **Code location**: [diff.ts](src/diff.ts) - `extractHunkForLineRange` and related functions
+- **Root cause**: Likely issue with how new files (no base content) are handled
+- **Action**: Add test cases to reproduce and fix
+
+#### 3. Investigate PR #1 workflow triggers broken
+After force-pushing to `test/original-pr-for-callback` branch, workflows stopped triggering.
+- Works fine on fresh PRs (PR #4, #6)
+- May be a GitHub security feature after force-push
+- **Action**: Can likely just close PR #1 and use fresh PRs for testing
+
+### Before Release to Master
+
+#### 4. Cleanup test files
+- Remove `src/test-callback.ts`
+- Remove `src/label-test.ts`
+- Remove `src/fresh-test.ts`
+- Remove corresponding `dist/*.d.ts` and `dist/*.d.ts.map` files
+
+#### 5. Cleanup test branches
+Delete branches:
+- `test/original-pr-for-callback`
+- `test/base-for-callback`
+- `test/fresh-pr`
+- `test/label-feature`
+- `splice/pr-*` branches
+
+#### 6. Close test PRs
+- PR #1, #4, #6 - close without merging
+
+## Branch Structure
+
+- `master` - Stable release (currently at commit 5da7920 with comment notification only)
+- `dev` - Development branch for testing before release (same as master currently)
+- `feature/on-merge-label` - Label feature ready for testing (commit 8cf8097)
