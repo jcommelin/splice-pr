@@ -198,20 +198,7 @@ Merge base branch into original PR's head branch automatically after spliced PR 
 
 ## Open TODOs
 
-### Current Session
-
-#### Test label feature in test-splice
-- Test-splice workflow updated to use `feature/on-merge-label`
-- Need to create test PR, splice it, merge, verify label appears
-
 ### High Priority
-
-#### Debug `needs-sync` label not being added
-The label feature was implemented but the label is not appearing on the original PR after merge.
-- **Branch**: `feature/on-merge-label` (commit 8cf8097)
-- **Test PR**: #6 should have received the label when PR #7 was merged
-- **Action**: Check workflow logs for run 19493949230 to see if `addLabels` failed or was skipped
-- **Code location**: [index.ts:176-184](src/index.ts#L176-L184) - label addition logic
 
 #### Debug line extraction bug
 When creating a review comment on line 4 of a new file, the wrong content was extracted.
