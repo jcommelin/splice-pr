@@ -11,6 +11,14 @@ inputs:
     description: 'GitHub token for API access'
     required: true
     default: ${{ github.token }}
+  on-merge:
+    description: 'Actions to take when a spliced PR is merged. Comma-separated list of: comment, label. Default: comment,label'
+    required: false
+    default: 'comment,label'
+  sync-label:
+    description: 'Label to add to original PR when spliced PR is merged'
+    required: false
+    default: 'needs-sync'
 
 runs:
   using: 'node20'
