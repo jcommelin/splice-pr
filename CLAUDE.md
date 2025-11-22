@@ -102,7 +102,7 @@ splice-bot labels:bug,urgent reviewers:@alice,@bob --draft branch:fix/auth-bug
 
 When a spliced PR is merged, the action can:
 - Post a notification comment on the original PR
-- Add a `needs-sync` label to the original PR
+- Add a label to the original PR (default: `needs-sync`)
 
 **Configuration**:
 ```yaml
@@ -110,6 +110,7 @@ When a spliced PR is merged, the action can:
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     on-merge: comment,label  # default: both
+    sync-label: needs-sync   # default: needs-sync
 ```
 
 ### Conflict Preview
