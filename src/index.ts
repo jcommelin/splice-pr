@@ -173,11 +173,12 @@ async function handleMergeCallback(
     }
   }
 
-  // Add needs-sync label to original PR
+  // Add sync label to original PR
   if (actions.includes('label')) {
+    const syncLabel = core.getInput('sync-label') || 'needs-sync';
     try {
-      await addLabels(octokit, owner, repo, originalPrNumber, ['needs-sync']);
-      core.info(`Added 'needs-sync' label to PR #${originalPrNumber}`);
+      await addLabels(octokit, owner, repo, originalPrNumber, [syncLabel]);
+      core.info(`Added '${syncLabel}' label to PR #${originalPrNumber}`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       core.warning(`Failed to add label to PR #${originalPrNumber}: ${errorMessage}`);

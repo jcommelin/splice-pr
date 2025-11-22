@@ -30698,11 +30698,12 @@ async function handleMergeCallback(octokit, owner, repo, context) {
             core.warning(`Failed to post notification to PR #${originalPrNumber}: ${errorMessage}`);
         }
     }
-    // Add needs-sync label to original PR
+    // Add sync label to original PR
     if (actions.includes('label')) {
+        const syncLabel = core.getInput('sync-label') || 'needs-sync';
         try {
-            await (0, github_1.addLabels)(octokit, owner, repo, originalPrNumber, ['needs-sync']);
-            core.info(`Added 'needs-sync' label to PR #${originalPrNumber}`);
+            await (0, github_1.addLabels)(octokit, owner, repo, originalPrNumber, [syncLabel]);
+            core.info(`Added '${syncLabel}' label to PR #${originalPrNumber}`);
         }
         catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
