@@ -1,11 +1,23 @@
+/**
+ * Unified diff parsing and application.
+ *
+ * Handles extraction of changes from PR diffs and applying hunks to base content.
+ * Core functions: extractHunkForLineRange, extractAllHunks, applyHunk.
+ */
+
 import { GitHub } from '@actions/github/lib/utils';
 import { ExtractedChange, DiffHunk } from './types';
 
 type Octokit = InstanceType<typeof GitHub>;
 
 /**
- * Parse a unified diff hunk header
- * Format: @@ -oldStart,oldLines +newStart,newLines @@
+ * Parse a unified diff hunk header.
+ *
+ * Format: `@@ -oldStart,oldLines +newStart,newLines @@`
+ *
+ * Examples:
+ * - `@@ -10,7 +10,9 @@` → old starts at 10 (7 lines), new starts at 10 (9 lines)
+ * - `@@ -1 +1,3 @@` → oldLines defaults to 1 when omitted
  */
 function parseHunkHeader(header: string): { oldStart: number; oldLines: number; newStart: number; newLines: number } | null {
   const match = header.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
@@ -22,12 +34,20 @@ function parseHunkHeader(header: string): { oldStart: number; oldLines: number; 
 }
 
 /**
- * Represents a line in the diff with its metadata
+ * A single line from a parsed diff, with line number metadata.
+ *
+ * - Additions (+) have newLineNum only (oldLineNum is null)
+ * - Deletions (-) have oldLineNum only (newLineNum is null)
+ * - Context lines ( ) have both line numbers
  */
 interface DiffLine {
+  /** Raw line content including the +/-/space prefix */
   content: string;
+  /** Line type based on the prefix character */
   type: 'context' | 'addition' | 'deletion';
+  /** Line number in the old (base) file, null for additions */
   oldLineNum: number | null;
+  /** Line number in the new (changed) file, null for deletions */
   newLineNum: number | null;
 }
 

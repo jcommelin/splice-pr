@@ -232,6 +232,13 @@ Delete branches:
 #### Close test PRs
 - PR #1, #4, #6 - close without merging
 
+### Future Refactoring
+
+#### Refactor `diff.ts`
+- Deletion handling may not be correct in all cases
+- Move `getFileDiff`, `getFileContent`, and `extractChanges` (functions using Octokit) to `github.ts`
+- Keep `diff.ts` focused on pure diff parsing/application logic
+
 ---
 
 ## Development Log

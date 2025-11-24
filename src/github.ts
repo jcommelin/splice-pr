@@ -1,11 +1,21 @@
+/**
+ * GitHub API operations for splice-bot.
+ *
+ * Thin wrappers around Octokit REST API calls, organized by function:
+ * - PR operations: getPrDetails, createPullRequest, addLabels, requestReviewers
+ * - Branch operations: createBranch, branchExists
+ * - Git operations: commitChanges (creates blob, tree, commit)
+ * - Comment operations: replyToComment, createIssueComment
+ */
+
 import { GitHub } from '@actions/github/lib/utils';
-import { CommentContext, ExtractedChange, DiffHunk } from './types';
+import { ExtractedChange } from './types';
 import { getFileContent, applyHunk } from './diff';
 
 type Octokit = InstanceType<typeof GitHub>;
 
 /**
- * Get PR details
+ * Get basic PR metadata needed for splice operations.
  */
 export async function getPrDetails(
   octokit: Octokit,
@@ -28,7 +38,7 @@ export async function getPrDetails(
 }
 
 /**
- * Create a new branch from the base branch
+ * Create a new branch pointing to the same commit as baseBranch.
  */
 export async function createBranch(
   octokit: Octokit,
@@ -54,7 +64,7 @@ export async function createBranch(
 }
 
 /**
- * Get the tree SHA for a commit
+ * Get the tree SHA for a commit (used internally by commitChanges).
  */
 async function getTreeSha(
   octokit: Octokit,
@@ -72,7 +82,7 @@ async function getTreeSha(
 }
 
 /**
- * Create a blob for file content
+ * Create a blob for file content (used internally by commitChanges).
  */
 async function createBlob(
   octokit: Octokit,
@@ -91,7 +101,14 @@ async function createBlob(
 }
 
 /**
- * Commit changes to the new branch
+ * Commit the spliced changes to the new branch.
+ *
+ * Steps:
+ * 1. Get base branch SHA and tree
+ * 2. Fetch original file content from base (empty string for new files)
+ * 3. Apply all hunks to produce new file content
+ * 4. Create blob → tree → commit with custom author
+ * 5. Update branch ref to point to new commit
  */
 export async function commitChanges(
   octokit: Octokit,
@@ -171,7 +188,7 @@ export async function commitChanges(
 }
 
 /**
- * Create a pull request
+ * Create a pull request from head branch to base branch.
  */
 export async function createPullRequest(
   octokit: Octokit,
@@ -200,7 +217,7 @@ export async function createPullRequest(
 }
 
 /**
- * Add labels to a pull request
+ * Add labels to a PR (uses issues API since PRs are issues).
  */
 export async function addLabels(
   octokit: Octokit,
@@ -329,18 +346,3 @@ export async function branchExists(
   }
 }
 
-/**
- * Delete a branch
- */
-export async function deleteBranch(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  branchName: string
-): Promise<void> {
-  await octokit.rest.git.deleteRef({
-    owner,
-    repo,
-    ref: `heads/${branchName}`,
-  });
-}
