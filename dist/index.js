@@ -29927,6 +29927,12 @@ function wrappy (fn, cb) {
 
 "use strict";
 
+/**
+ * Unified diff parsing and application.
+ *
+ * Handles extraction of changes from PR diffs and applying hunks to base content.
+ * Core functions: extractHunkForLineRange, extractAllHunks, applyHunk.
+ */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.extractHunkForLineRange = extractHunkForLineRange;
 exports.extractEntireHunkForLine = extractEntireHunkForLine;
@@ -29936,8 +29942,13 @@ exports.getFileContent = getFileContent;
 exports.applyHunk = applyHunk;
 exports.extractChanges = extractChanges;
 /**
- * Parse a unified diff hunk header
- * Format: @@ -oldStart,oldLines +newStart,newLines @@
+ * Parse a unified diff hunk header.
+ *
+ * Format: `@@ -oldStart,oldLines +newStart,newLines @@`
+ *
+ * Examples:
+ * - `@@ -10,7 +10,9 @@` → old starts at 10 (7 lines), new starts at 10 (9 lines)
+ * - `@@ -1 +1,3 @@` → oldLines defaults to 1 when omitted
  */
 function parseHunkHeader(header) {
     const match = header.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
@@ -30287,6 +30298,15 @@ async function extractChanges(octokit, owner, repo, prNumber, filePath, startLin
 
 "use strict";
 
+/**
+ * GitHub API operations for splice-bot.
+ *
+ * Thin wrappers around Octokit REST API calls, organized by function:
+ * - PR operations: getPrDetails, createPullRequest, addLabels, requestReviewers
+ * - Branch operations: createBranch, branchExists
+ * - Git operations: commitChanges (creates blob, tree, commit)
+ * - Comment operations: replyToComment, createIssueComment
+ */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getPrDetails = getPrDetails;
 exports.createBranch = createBranch;
@@ -30298,10 +30318,9 @@ exports.checkForConflicts = checkForConflicts;
 exports.replyToComment = replyToComment;
 exports.createIssueComment = createIssueComment;
 exports.branchExists = branchExists;
-exports.deleteBranch = deleteBranch;
 const diff_1 = __nccwpck_require__(9952);
 /**
- * Get PR details
+ * Get basic PR metadata needed for splice operations.
  */
 async function getPrDetails(octokit, owner, repo, prNumber) {
     const { data: pr } = await octokit.rest.pulls.get({
@@ -30317,7 +30336,7 @@ async function getPrDetails(octokit, owner, repo, prNumber) {
     };
 }
 /**
- * Create a new branch from the base branch
+ * Create a new branch pointing to the same commit as baseBranch.
  */
 async function createBranch(octokit, owner, repo, branchName, baseBranch) {
     // Get the SHA of the base branch
@@ -30335,7 +30354,7 @@ async function createBranch(octokit, owner, repo, branchName, baseBranch) {
     });
 }
 /**
- * Get the tree SHA for a commit
+ * Get the tree SHA for a commit (used internally by commitChanges).
  */
 async function getTreeSha(octokit, owner, repo, commitSha) {
     const { data: commit } = await octokit.rest.git.getCommit({
@@ -30346,7 +30365,7 @@ async function getTreeSha(octokit, owner, repo, commitSha) {
     return commit.tree.sha;
 }
 /**
- * Create a blob for file content
+ * Create a blob for file content (used internally by commitChanges).
  */
 async function createBlob(octokit, owner, repo, content) {
     const { data: blob } = await octokit.rest.git.createBlob({
@@ -30358,7 +30377,14 @@ async function createBlob(octokit, owner, repo, content) {
     return blob.sha;
 }
 /**
- * Commit changes to the new branch
+ * Commit the spliced changes to the new branch.
+ *
+ * Steps:
+ * 1. Get base branch SHA and tree
+ * 2. Fetch original file content from base (empty string for new files)
+ * 3. Apply all hunks to produce new file content
+ * 4. Create blob → tree → commit with custom author
+ * 5. Update branch ref to point to new commit
  */
 async function commitChanges(octokit, owner, repo, branchName, changes, baseBranch, commitMessage, originalPrNumber, authorName, authorEmail) {
     // Get the base branch SHA
@@ -30418,7 +30444,7 @@ async function commitChanges(octokit, owner, repo, branchName, changes, baseBran
     return newCommit.sha;
 }
 /**
- * Create a pull request
+ * Create a pull request from head branch to base branch.
  */
 async function createPullRequest(octokit, owner, repo, title, body, head, base, draft = false) {
     const { data: pr } = await octokit.rest.pulls.create({
@@ -30436,7 +30462,7 @@ async function createPullRequest(octokit, owner, repo, title, body, head, base, 
     };
 }
 /**
- * Add labels to a pull request
+ * Add labels to a PR (uses issues API since PRs are issues).
  */
 async function addLabels(octokit, owner, repo, prNumber, labels) {
     await octokit.rest.issues.addLabels({
@@ -30520,16 +30546,6 @@ async function branchExists(octokit, owner, repo, branchName) {
         return false;
     }
 }
-/**
- * Delete a branch
- */
-async function deleteBranch(octokit, owner, repo, branchName) {
-    await octokit.rest.git.deleteRef({
-        owner,
-        repo,
-        ref: `heads/${branchName}`,
-    });
-}
 
 
 /***/ }),
@@ -30539,6 +30555,13 @@ async function deleteBranch(octokit, owner, repo, branchName) {
 
 "use strict";
 
+/**
+ * Entry point for splice-bot GitHub Action.
+ *
+ * Handles two event types:
+ * - pull_request_review_comment: Extract changes and create new PR
+ * - pull_request (closed+merged): Notify original PR about spliced PR merge
+ */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -30712,25 +30735,30 @@ async function handleMergeCallback(octokit, owner, repo, context) {
     }
 }
 /**
- * Parse splice-bot metadata from PR description
+ * Parse splice-bot metadata from PR description.
+ * Looks for `<!-- {"splice-bot": {...}} -->` HTML comment.
  */
 function parseSpliceBotMetadata(body) {
-    // Look for the HTML comment with JSON metadata
-    const match = body.match(/<!--\s*(\{"splice-bot":.+?\})\s*-->/);
-    if (!match) {
-        return null;
-    }
     try {
+        const match = body.match(/<!--\s*(\{"splice-bot":.+?\})\s*-->/);
         const metadata = JSON.parse(match[1]);
-        if (metadata['splice-bot'] && typeof metadata['splice-bot']['original-pr'] === 'number') {
-            return metadata;
-        }
-        return null;
+        const isValid = metadata['splice-bot'] && typeof metadata['splice-bot']['original-pr'] === 'number';
+        return isValid ? metadata : null;
     }
     catch {
         return null;
     }
 }
+/**
+ * Core splice operation: extract changes and create a new PR.
+ *
+ * Steps:
+ * 1. Get PR details and determine base branch
+ * 2. Extract changes based on mode (lines, hunk, or entire file)
+ * 3. Create branch, commit changes, create PR
+ * 4. Add labels/reviewers if specified
+ * 5. Reply to original comment with result
+ */
 async function splice(octokit, owner, repo, commentContext, instruction) {
     const { prNumber, path, startLine, endLine, commentId, authorLogin, authorEmail } = commentContext;
     try {
@@ -30739,41 +30767,33 @@ async function splice(octokit, owner, repo, commentContext, instruction) {
         const prDetails = await (0, github_1.getPrDetails)(octokit, owner, repo, prNumber);
         // Determine the base branch
         const baseBranch = instruction?.base || prDetails.baseBranch;
-        // Generate or use custom branch name
-        const branchName = instruction?.branch || (0, parser_1.generateBranchName)(prNumber, commentId);
-        // Check if branch already exists
-        if (await (0, github_1.branchExists)(octokit, owner, repo, branchName)) {
-            core.info(`Branch ${branchName} already exists, deleting...`);
-            await (0, github_1.deleteBranch)(octokit, owner, repo, branchName);
+        // Generate or use custom branch name, appending suffix if it already exists
+        let branchName = instruction?.branch || (0, parser_1.generateBranchName)(prNumber, commentId);
+        let suffix = 2;
+        while (await (0, github_1.branchExists)(octokit, owner, repo, branchName)) {
+            const baseName = instruction?.branch || (0, parser_1.generateBranchName)(prNumber, commentId);
+            branchName = `${baseName}-${suffix}`;
+            suffix++;
         }
         // Extract the changes based on mode
         let changes = null;
-        let extractionMode = 'lines';
         const lineRange = startLine === endLine ? `line ${endLine}` : `lines ${startLine}-${endLine}`;
-        if (instruction?.entireFile) {
-            extractionMode = 'entire file';
-            core.info(`Extracting entire file changes from ${path}...`);
+        const extractionMode = instruction?.entireFile ? 'entire file'
+            : instruction?.entireHunk ? 'entire hunk'
+                : 'lines';
+        core.info(`Extracting ${extractionMode} from ${path}${extractionMode === 'lines' ? ` at ${lineRange}` : ''}...`);
+        if (instruction?.entireFile || instruction?.entireHunk) {
             const patch = await (0, diff_1.getFileDiff)(octokit, owner, repo, prNumber, path);
             if (patch) {
-                const hunks = (0, diff_1.extractAllHunks)(patch);
+                const hunks = instruction.entireFile
+                    ? (0, diff_1.extractAllHunks)(patch)
+                    : [(0, diff_1.extractEntireHunkForLine)(patch, endLine)].filter((h) => h !== null);
                 if (hunks.length > 0) {
                     changes = { path, hunks };
                 }
             }
         }
-        else if (instruction?.entireHunk) {
-            extractionMode = 'entire hunk';
-            core.info(`Extracting entire hunk from ${path} containing ${lineRange}...`);
-            const patch = await (0, diff_1.getFileDiff)(octokit, owner, repo, prNumber, path);
-            if (patch) {
-                const hunk = (0, diff_1.extractEntireHunkForLine)(patch, endLine);
-                if (hunk) {
-                    changes = { path, hunks: [hunk] };
-                }
-            }
-        }
         else {
-            core.info(`Extracting changes from ${path} at ${lineRange}...`);
             changes = await (0, diff_1.extractChanges)(octokit, owner, repo, prNumber, path, startLine, endLine);
         }
         if (!changes) {
@@ -30789,12 +30809,19 @@ async function splice(octokit, owner, repo, commentContext, instruction) {
         // Commit the changes
         core.info('Committing changes...');
         await (0, github_1.commitChanges)(octokit, owner, repo, branchName, changes, baseBranch, prTitle, prNumber, authorLogin, authorEmail);
-        // Check for potential conflicts
-        core.info('Checking for potential conflicts...');
-        const hasConflicts = await (0, github_1.checkForConflicts)(octokit, owner, repo, path, baseBranch, prDetails.headBranch);
-        if (hasConflicts) {
-            core.warning(`File ${path} may have been modified in base branch - conflicts possible`);
-        }
+        // TODO: Rethink conflict detection - current approach needs work
+        // core.info('Checking for potential conflicts...');
+        // const hasConflicts = await checkForConflicts(
+        //   octokit,
+        //   owner,
+        //   repo,
+        //   path,
+        //   baseBranch,
+        //   prDetails.headBranch
+        // );
+        // if (hasConflicts) {
+        //   core.warning(`File ${path} may have been modified in base branch - conflicts possible`);
+        // }
         // Generate PR description
         const prDescription = (0, parser_1.generatePrDescription)({
             originalPrNumber: prNumber,
@@ -30820,10 +30847,7 @@ async function splice(octokit, owner, repo, commentContext, instruction) {
             await (0, github_1.requestReviewers)(octokit, owner, repo, newPr.number, instruction.reviewers);
         }
         // Reply to the original comment
-        let successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
-        if (hasConflicts) {
-            successMessage += `\n\n⚠️ **Warning**: The file \`${path}\` may have been modified in the base branch. Please check for conflicts.`;
-        }
+        const successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
         await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, commentId, successMessage);
         return {
             success: true,
@@ -30854,17 +30878,27 @@ run();
 
 "use strict";
 
+/**
+ * Command parsing for splice-bot comments.
+ *
+ * Parses review comment text into structured instructions and generates
+ * branch names, PR titles, and PR descriptions for spliced PRs.
+ */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseInstruction = parseInstruction;
 exports.generateBranchName = generateBranchName;
 exports.generatePrTitle = generatePrTitle;
 exports.generatePrDescription = generatePrDescription;
 /**
- * Parse splice-bot command from comment body
- * Supports formats:
- * - splice-bot
- * - splice-bot "PR title"
- * - splice-bot title:"PR title" base:branch group:name
+ * Parse splice-bot command from comment body.
+ *
+ * Supports multiple formats:
+ * - `splice-bot` - bare command with defaults
+ * - `splice-bot "PR title"` - simple quoted title
+ * - `splice-bot title:"PR title" base:branch labels:a,b --draft` - full options
+ *
+ * @param body - The full comment text (may contain other content before/after)
+ * @returns Parsed instruction or null if no splice-bot command found
  */
 function parseInstruction(body) {
     const match = body.match(/splice-bot\s*(.*)/i);
@@ -30902,8 +30936,8 @@ function parseInstruction(body) {
             case 'title':
                 instruction.title = value;
                 break;
-            case 'group':
-                instruction.group = value;
+            case 'batch':
+                instruction.batch = value;
                 break;
             case 'base':
                 instruction.base = value;
@@ -30926,20 +30960,31 @@ function parseInstruction(body) {
     return instruction;
 }
 /**
- * Generate a branch name for the spliced PR
+ * Generate a branch name for the spliced PR.
+ *
+ * Uses commentId for uniqueness, allowing multiple splices from the same PR.
+ * Format: `splice/pr-{prNumber}-{commentId}`
  */
 function generateBranchName(prNumber, commentId) {
     return `splice/pr-${prNumber}-${commentId}`;
 }
 /**
- * Generate a PR title if not provided
+ * Generate a default PR title based on the file being spliced.
+ *
+ * Used when the user doesn't provide a custom title via `splice-bot "title"`.
  */
 function generatePrTitle(path) {
     const fileName = path.split('/').pop() || path;
     return `[Splice] Extract changes from ${fileName}`;
 }
 /**
- * Generate PR description
+ * Generate PR description with metadata for post-merge callbacks.
+ *
+ * The description includes:
+ * - Link to the original PR
+ * - File and line range
+ * - Link to the triggering comment
+ * - Hidden JSON metadata for the merge callback to find the original PR
  */
 function generatePrDescription(options) {
     const { originalPrNumber, originalPrTitle, path, startLine, endLine, commentId, authorLogin, customDescription, } = options;
