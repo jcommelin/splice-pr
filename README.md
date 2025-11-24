@@ -54,10 +54,42 @@ splice-bot --entire-file                # Extract all file changes
 
 The commit author is set to whoever left the review comment.
 
+## Configuration
+
+Configure post-merge behavior in your workflow:
+
+```yaml
+- uses: jcommelin/splice-pr@master
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    on-merge: comment,label   # Actions when spliced PR merges (default: both)
+    sync-label: needs-sync    # Label to add to original PR (default: needs-sync)
+```
+
 ## Limitations
 
 - Single file selections only (multi-file support planned)
 - Requires the repository permission settings above
+
+## Source Code
+
+The codebase is small (~600 lines) and organized for easy understanding:
+
+```
+src/
+├── types.ts    # Start here: data structures
+├── parser.ts   # Command parsing and PR text generation
+├── diff.ts     # Unified diff parsing and application
+├── github.ts   # GitHub API operations
+└── index.ts    # Entry point and orchestration
+```
+
+**Recommended reading order:**
+1. `types.ts` - Understand the data flow
+2. `parser.ts` - How commands become instructions
+3. `diff.ts` - How diffs are extracted and applied
+4. `github.ts` - GitHub API wrappers
+5. `index.ts` - How it all fits together
 
 ## License
 

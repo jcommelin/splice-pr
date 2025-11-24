@@ -1,11 +1,22 @@
+/**
+ * Command parsing for splice-bot comments.
+ *
+ * Parses review comment text into structured instructions and generates
+ * branch names, PR titles, and PR descriptions for spliced PRs.
+ */
+
 import { SpliceInstruction } from './types';
 
 /**
- * Parse splice-bot command from comment body
- * Supports formats:
- * - splice-bot
- * - splice-bot "PR title"
- * - splice-bot title:"PR title" base:branch group:name
+ * Parse splice-bot command from comment body.
+ *
+ * Supports multiple formats:
+ * - `splice-bot` - bare command with defaults
+ * - `splice-bot "PR title"` - simple quoted title
+ * - `splice-bot title:"PR title" base:branch labels:a,b --draft` - full options
+ *
+ * @param body - The full comment text (may contain other content before/after)
+ * @returns Parsed instruction or null if no splice-bot command found
  */
 export function parseInstruction(body: string): SpliceInstruction | null {
   const match = body.match(/splice-bot\s*(.*)/i);
@@ -50,8 +61,8 @@ export function parseInstruction(body: string): SpliceInstruction | null {
       case 'title':
         instruction.title = value;
         break;
-      case 'group':
-        instruction.group = value;
+      case 'batch':
+        instruction.batch = value;
         break;
       case 'base':
         instruction.base = value;
@@ -76,33 +87,53 @@ export function parseInstruction(body: string): SpliceInstruction | null {
 }
 
 /**
- * Generate a branch name for the spliced PR
+ * Generate a branch name for the spliced PR.
+ *
+ * Uses commentId for uniqueness, allowing multiple splices from the same PR.
+ * Format: `splice/pr-{prNumber}-{commentId}`
  */
 export function generateBranchName(prNumber: number, commentId: number): string {
   return `splice/pr-${prNumber}-${commentId}`;
 }
 
 /**
- * Generate a PR title if not provided
+ * Generate a default PR title based on the file being spliced.
+ *
+ * Used when the user doesn't provide a custom title via `splice-bot "title"`.
  */
 export function generatePrTitle(path: string): string {
   const fileName = path.split('/').pop() || path;
   return `[Splice] Extract changes from ${fileName}`;
 }
 
+/** Options for generating a spliced PR description */
 export interface PrDescriptionOptions {
+  /** PR number of the source PR */
   originalPrNumber: number;
+  /** Title of the source PR */
   originalPrTitle: string;
+  /** File path being spliced */
   path: string;
+  /** First line of the selection */
   startLine: number;
+  /** Last line of the selection */
   endLine: number;
+  /** Comment ID (for linking back) */
   commentId: number;
+  /** GitHub username who requested the splice */
   authorLogin: string;
+  /** Optional custom description from the command */
   customDescription?: string;
 }
 
 /**
- * Generate PR description
+ * Generate PR description with metadata for post-merge callbacks.
+ *
+ * The description includes:
+ * - Link to the original PR
+ * - File and line range
+ * - Link to the triggering comment
+ * - Hidden JSON metadata for the merge callback to find the original PR
  */
 export function generatePrDescription(options: PrDescriptionOptions): string {
   const {
