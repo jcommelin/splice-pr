@@ -1,8 +1,17 @@
+/**
+ * GitHub API operations for splice-bot.
+ *
+ * Thin wrappers around Octokit REST API calls, organized by function:
+ * - PR operations: getPrDetails, createPullRequest, addLabels, requestReviewers
+ * - Branch operations: createBranch, branchExists
+ * - Git operations: commitChanges (creates blob, tree, commit)
+ * - Comment operations: replyToComment, createIssueComment
+ */
 import { GitHub } from '@actions/github/lib/utils';
 import { ExtractedChange } from './types';
 type Octokit = InstanceType<typeof GitHub>;
 /**
- * Get PR details
+ * Get basic PR metadata needed for splice operations.
  */
 export declare function getPrDetails(octokit: Octokit, owner: string, repo: string, prNumber: number): Promise<{
     title: string;
@@ -11,22 +20,29 @@ export declare function getPrDetails(octokit: Octokit, owner: string, repo: stri
     headSha: string;
 }>;
 /**
- * Create a new branch from the base branch
+ * Create a new branch pointing to the same commit as baseBranch.
  */
 export declare function createBranch(octokit: Octokit, owner: string, repo: string, branchName: string, baseBranch: string): Promise<void>;
 /**
- * Commit changes to the new branch
+ * Commit the spliced changes to the new branch.
+ *
+ * Steps:
+ * 1. Get base branch SHA and tree
+ * 2. Fetch original file content from base (empty string for new files)
+ * 3. Apply all hunks to produce new file content
+ * 4. Create blob → tree → commit with custom author
+ * 5. Update branch ref to point to new commit
  */
 export declare function commitChanges(octokit: Octokit, owner: string, repo: string, branchName: string, changes: ExtractedChange, baseBranch: string, commitMessage: string, originalPrNumber: number, authorName: string, authorEmail: string): Promise<string>;
 /**
- * Create a pull request
+ * Create a pull request from head branch to base branch.
  */
 export declare function createPullRequest(octokit: Octokit, owner: string, repo: string, title: string, body: string, head: string, base: string, draft?: boolean): Promise<{
     number: number;
     url: string;
 }>;
 /**
- * Add labels to a pull request
+ * Add labels to a PR (uses issues API since PRs are issues).
  */
 export declare function addLabels(octokit: Octokit, owner: string, repo: string, prNumber: number, labels: string[]): Promise<void>;
 /**
@@ -50,8 +66,4 @@ export declare function createIssueComment(octokit: Octokit, owner: string, repo
  * Check if a branch exists
  */
 export declare function branchExists(octokit: Octokit, owner: string, repo: string, branchName: string): Promise<boolean>;
-/**
- * Delete a branch
- */
-export declare function deleteBranch(octokit: Octokit, owner: string, repo: string, branchName: string): Promise<void>;
 export {};

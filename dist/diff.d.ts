@@ -1,3 +1,9 @@
+/**
+ * Unified diff parsing and application.
+ *
+ * Handles extraction of changes from PR diffs and applying hunks to base content.
+ * Core functions: extractHunkForLineRange, extractAllHunks, applyHunk.
+ */
 import { GitHub } from '@actions/github/lib/utils';
 import { ExtractedChange, DiffHunk } from './types';
 type Octokit = InstanceType<typeof GitHub>;
