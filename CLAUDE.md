@@ -198,6 +198,19 @@ Merge base branch into original PR's head branch automatically after spliced PR 
 
 ## Open TODOs
 
+### Current Session (Session 4)
+
+#### Line extraction bug fix - IN PROGRESS
+- **PR #9**: `fix/line-extraction-bug` branch with fix for pure addition extraction
+- **Issue**: When extracting a pure addition (line 3 `baz` from a diff after lines 1-2 were already spliced), `oldStart` was incorrectly set to 1, causing insertion at wrong position
+- **Fix**: Look backwards in diff to find previous line with `oldLineNum` and set `oldStart` after it
+- **Status**: Unit tests pass, but production test (PR #33 in test-splice) still shows wrong result
+- **Next**: Debug why production behavior differs from unit tests
+
+#### Test the label feature ✅
+- Tested in test-splice PR #26 → spliced to PR #27
+- PR #27 merged, PR #26 received `needs-sync` label and notification comment
+
 ### High Priority
 
 #### Debug line extraction bug
