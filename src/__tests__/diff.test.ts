@@ -146,3 +146,159 @@ new line
 line 3`);
   });
 });
+
+describe('extractHunkForLineRange - new files', () => {
+  // For new files, the patch starts with @@ -0,0 +1,N @@
+  const newFilePatch = `@@ -0,0 +1,5 @@
++export const foo = 1;
++export const bar = 2;
++export const baz = 3;
++export const qux = 4;
++export const quux = 5;`;
+
+  it('extracts line 4 from new file correctly', () => {
+    // Line 4 should be "export const qux = 4;"
+    const hunk = extractHunkForLineRange(newFilePatch, 4, 4);
+    expect(hunk).not.toBeNull();
+    expect(hunk!.content).toContain('+export const qux = 4;');
+    expect(hunk!.newStart).toBe(4);
+    expect(hunk!.newLines).toBe(1);
+  });
+
+  it('extracts line 3 from new file correctly', () => {
+    // Line 3 should be "export const baz = 3;"
+    const hunk = extractHunkForLineRange(newFilePatch, 3, 3);
+    expect(hunk).not.toBeNull();
+    expect(hunk!.content).toContain('+export const baz = 3;');
+    expect(hunk!.newStart).toBe(3);
+  });
+
+  it('extracts line 1 from new file correctly', () => {
+    // Line 1 should be "export const foo = 1;"
+    const hunk = extractHunkForLineRange(newFilePatch, 1, 1);
+    expect(hunk).not.toBeNull();
+    expect(hunk!.content).toContain('+export const foo = 1;');
+    expect(hunk!.newStart).toBe(1);
+  });
+
+  it('extracts range from new file correctly', () => {
+    // Lines 2-4
+    const hunk = extractHunkForLineRange(newFilePatch, 2, 4);
+    expect(hunk).not.toBeNull();
+    expect(hunk!.content).toContain('+export const bar = 2;');
+    expect(hunk!.content).toContain('+export const baz = 3;');
+    expect(hunk!.content).toContain('+export const qux = 4;');
+    expect(hunk!.content).not.toContain('+export const foo = 1;');
+    expect(hunk!.content).not.toContain('+export const quux = 5;');
+    expect(hunk!.newStart).toBe(2);
+    expect(hunk!.newLines).toBe(3);
+  });
+});
+
+describe('extractHunkForLineRange - complex patch with deletions and additions', () => {
+  // This reproduces the bug from PR #3 in splice-pr main repo
+  // Original file had 3 lines, PR adds a comment, keeps middle line, replaces last two
+  // New file after changes:
+  // Line 1: // Test file for post-merge callback
+  // Line 2: export const foo = 1;
+  // Line 3: export const bar = 2;
+  // Line 4: export const baz = 3;
+  const complexPatch = `@@ -1,3 +1,4 @@
+-export const bar = 2;
++// Test file for post-merge callback
+ export const foo = 1;
+-export const bar = 2;
++export const bar = 2;
++export const baz = 3;`;
+
+  it('extracts line 4 (export const baz) correctly', () => {
+    // Line 4 in new file is "export const baz = 3;"
+    const hunk = extractHunkForLineRange(complexPatch, 4, 4);
+    expect(hunk).not.toBeNull();
+    expect(hunk!.content).toContain('+export const baz = 3;');
+    expect(hunk!.content).not.toContain('+// Test file');
+    expect(hunk!.content).not.toContain('+export const bar = 2;');
+    expect(hunk!.newStart).toBe(4);
+    expect(hunk!.newLines).toBe(1);
+  });
+
+  it('extracts line 1 (comment) correctly', () => {
+    const hunk = extractHunkForLineRange(complexPatch, 1, 1);
+    expect(hunk).not.toBeNull();
+    expect(hunk!.content).toContain('+// Test file for post-merge callback');
+    expect(hunk!.newStart).toBe(1);
+  });
+
+  it('extracts line 3 (export const bar) correctly', () => {
+    // Line 3 in new file is "export const bar = 2;"
+    const hunk = extractHunkForLineRange(complexPatch, 3, 3);
+    expect(hunk).not.toBeNull();
+    expect(hunk!.content).toContain('+export const bar = 2;');
+    expect(hunk!.content).not.toContain('+export const baz = 3;');
+    expect(hunk!.newStart).toBe(3);
+  });
+});
+
+describe('extractHunkForLineRange - reproduced bug from test-splice PR #28', () => {
+  // After merging a spliced PR, the remaining changes have this diff:
+  // Base (master) has: foo, bar
+  // PR branch has: foo, bar, baz, qux
+  // The diff shows: context for foo, deletion of old bar (no newline), addition of bar, baz, qux
+  const buggyPatch = `@@ -1,2 +1,4 @@
+ export const foo = 1;
+-export const bar = 2;
++export const bar = 2;
++export const baz = 3;
++export const qux = 4;`;
+
+  it('extracts line 3 (baz) correctly', () => {
+    // Line 3 in new file is "export const baz = 3;"
+    // The deletion (-export const bar) is in the OLD file, not the new file
+    const hunk = extractHunkForLineRange(buggyPatch, 3, 3);
+    expect(hunk).not.toBeNull();
+    expect(hunk!.content).toContain('+export const baz = 3;');
+    // Should NOT include bar since that's line 2
+    expect(hunk!.content).not.toContain('+export const bar = 2;');
+    expect(hunk!.newStart).toBe(3);
+    expect(hunk!.newLines).toBe(1);
+    // Critical: oldStart should be 3 (after old line 2) for correct insertion
+    expect(hunk!.oldStart).toBe(3);
+  });
+
+  it('extracts line 4 (qux) correctly', () => {
+    const hunk = extractHunkForLineRange(buggyPatch, 4, 4);
+    expect(hunk).not.toBeNull();
+    expect(hunk!.content).toContain('+export const qux = 4;');
+    expect(hunk!.content).not.toContain('+export const baz = 3;');
+    expect(hunk!.newStart).toBe(4);
+    expect(hunk!.newLines).toBe(1);
+    // oldStart should be 3 (after old line 2)
+    expect(hunk!.oldStart).toBe(3);
+  });
+
+  it('extracts line 2 (bar) correctly', () => {
+    // Line 2 is the bar line - it's being modified (deletion + addition)
+    const hunk = extractHunkForLineRange(buggyPatch, 2, 2);
+    expect(hunk).not.toBeNull();
+    expect(hunk!.content).toContain('+export const bar = 2;');
+    // May also include the deletion since it's a replacement
+    expect(hunk!.content).not.toContain('+export const baz = 3;');
+    expect(hunk!.newStart).toBe(2);
+  });
+
+  it('applies extracted line 3 to base correctly', () => {
+    // Base content (what's on master)
+    const baseContent = `export const foo = 1;
+export const bar = 2;`;
+
+    // Extract line 3
+    const hunk = extractHunkForLineRange(buggyPatch, 3, 3);
+    expect(hunk).not.toBeNull();
+
+    // Apply to base - should add baz at the end
+    const result = applyHunk(baseContent, hunk!);
+    expect(result).toBe(`export const foo = 1;
+export const bar = 2;
+export const baz = 3;`);
+  });
+});

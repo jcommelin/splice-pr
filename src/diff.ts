@@ -160,8 +160,27 @@ export function extractHunkForLineRange(filePatch: string, startLine: number, en
   }
 
   // Find the starting line numbers
-  const firstOldLine = selectedLines.find(l => l.oldLineNum !== null)?.oldLineNum || 1;
+  let firstOldLine = selectedLines.find(l => l.oldLineNum !== null)?.oldLineNum || 1;
   const firstNewLine = selectedLines.find(l => l.newLineNum !== null)?.newLineNum || 1;
+
+  // For pure additions (no context or deletions in selection), we need to find
+  // where to insert relative to the base file. Look at the diff line that
+  // comes immediately before our first selected line.
+  if (oldLinesCount === 0) {
+    // Find the index of our first selected line in allDiffLines
+    const firstSelectedIdx = allDiffLines.indexOf(selectedLines[0]);
+
+    // Look backwards to find the last line with an oldLineNum
+    for (let i = firstSelectedIdx - 1; i >= 0; i--) {
+      const prevLine = allDiffLines[i];
+      if (prevLine.oldLineNum !== null) {
+        // Insert after this old line (so oldStart is oldLineNum + 1)
+        firstOldLine = prevLine.oldLineNum + 1;
+        break;
+      }
+    }
+    // If no previous old line found, it means we're inserting at the start (oldStart = 1)
+  }
 
   // Build the hunk content with header
   const header = `@@ -${firstOldLine},${oldLinesCount} +${firstNewLine},${newLinesCount} @@`;
