@@ -30601,6 +30601,12 @@ async function run() {
         if (context.eventName === 'pull_request_review_comment') {
             await handleSpliceComment(octokit, owner, repo, context);
         }
+        else if (context.eventName === 'issue_comment') {
+            await handleIssueComment(octokit, owner, repo, context);
+        }
+        else if (context.eventName === 'pull_request_review') {
+            await handlePullRequestReview(octokit, owner, repo, context);
+        }
         else if (context.eventName === 'pull_request') {
             await handleMergeCallback(octokit, owner, repo, context);
         }
@@ -30615,6 +30621,131 @@ async function run() {
         else {
             core.setFailed('An unexpected error occurred');
         }
+    }
+}
+/**
+ * Handle pull request review events (review summary comments for --ship commands)
+ */
+async function handlePullRequestReview(octokit, owner, repo, context) {
+    const payload = context.payload;
+    const review = payload.review;
+    const pullRequest = payload.pull_request;
+    if (!pullRequest) {
+        core.info('Review is not on a pull request, skipping');
+        return;
+    }
+    if (!review || !review.body) {
+        core.info('Review has no body, skipping');
+        return;
+    }
+    // Parse the instruction from the review body
+    const instruction = (0, parser_1.parseInstruction)(review.body);
+    if (!instruction) {
+        core.info('Review body does not contain splice-bot command');
+        return;
+    }
+    // Only handle batch:id --ship commands from review bodies
+    if (!instruction.batch || !instruction.ship) {
+        core.info('Review body must be batch:id --ship command');
+        return;
+    }
+    core.info(`Processing batch:${instruction.batch} --ship from review ${review.id}`);
+    // Get author information from the review
+    const authorLogin = review.user?.login || 'github-actions[bot]';
+    const authorEmail = review.user?.id
+        ? `${review.user.id}+${authorLogin}@users.noreply.github.com`
+        : 'github-actions[bot]@users.noreply.github.com';
+    // Create a minimal CommentContext for the --ship review
+    // This review doesn't have file/line info since it's a summary comment
+    const commentContext = {
+        commentId: review.id,
+        prNumber: pullRequest.number,
+        path: '', // Not applicable for review summaries
+        startLine: 0,
+        endLine: 0,
+        originalStartLine: null,
+        originalEndLine: null,
+        diffHunk: '',
+        body: review.body,
+        commitId: review.commit_id || '',
+        authorLogin,
+        authorEmail,
+        side: 'RIGHT',
+        startSide: null,
+    };
+    // Run batch splice operation
+    const result = await spliceBatch(octokit, owner, repo, pullRequest.number, instruction.batch, false, // Not synthetic - explicit batch
+    commentContext, instruction);
+    if (result.success) {
+        core.info(`Successfully created PR: ${result.prUrl}`);
+        core.setOutput('pr-url', result.prUrl);
+        core.setOutput('branch-name', result.branchName);
+    }
+    else {
+        core.setFailed(result.error || 'Unknown error');
+    }
+}
+/**
+ * Handle issue comment events (regular PR comments for --ship commands)
+ */
+async function handleIssueComment(octokit, owner, repo, context) {
+    const payload = context.payload;
+    const comment = payload.comment;
+    const issue = payload.issue;
+    // Only process comments on pull requests
+    if (!issue || !issue.pull_request) {
+        core.info('Comment is not on a pull request, skipping');
+        return;
+    }
+    if (!comment) {
+        core.setFailed('Missing comment in payload');
+        return;
+    }
+    // Parse the instruction from the comment
+    const instruction = (0, parser_1.parseInstruction)(comment.body);
+    if (!instruction) {
+        core.info('Comment does not contain splice-bot command');
+        return;
+    }
+    // Only handle batch:id --ship commands from issue comments
+    if (!instruction.batch || !instruction.ship) {
+        core.info('Issue comment must be batch:id --ship command');
+        return;
+    }
+    core.info(`Processing batch:${instruction.batch} --ship from issue comment ${comment.id}`);
+    // Get author information from the comment
+    const authorLogin = comment.user?.login || 'github-actions[bot]';
+    const authorEmail = comment.user?.id
+        ? `${comment.user.id}+${authorLogin}@users.noreply.github.com`
+        : 'github-actions[bot]@users.noreply.github.com';
+    // Create a minimal CommentContext for the --ship comment
+    // This comment doesn't have file/line info since it's not a review comment
+    const commentContext = {
+        commentId: comment.id,
+        prNumber: issue.number,
+        path: '', // Not applicable for issue comments
+        startLine: 0,
+        endLine: 0,
+        originalStartLine: null,
+        originalEndLine: null,
+        diffHunk: '',
+        body: comment.body,
+        commitId: '',
+        authorLogin,
+        authorEmail,
+        side: 'RIGHT',
+        startSide: null,
+    };
+    // Run batch splice operation
+    const result = await spliceBatch(octokit, owner, repo, issue.number, instruction.batch, false, // Not synthetic - explicit batch
+    commentContext, instruction);
+    if (result.success) {
+        core.info(`Successfully created PR: ${result.prUrl}`);
+        core.setOutput('pr-url', result.prUrl);
+        core.setOutput('branch-name', result.branchName);
+    }
+    else {
+        core.setFailed(result.error || 'Unknown error');
     }
 }
 /**
@@ -30931,7 +31062,15 @@ async function createSplicePr(octokit, owner, repo, prNumber, changes, commentCo
     }
     // Reply to the original comment
     const successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
-    await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, commentContext.commentId, successMessage);
+    // Use appropriate reply method based on whether this is a review comment or issue comment
+    if (commentContext.path) {
+        // Review comment - use replyToComment
+        await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, commentContext.commentId, successMessage);
+    }
+    else {
+        // Issue comment - use createIssueComment
+        await (0, github_1.createIssueComment)(octokit, owner, repo, prNumber, successMessage);
+    }
     return {
         success: true,
         prUrl: newPr.url,
@@ -30951,7 +31090,14 @@ async function spliceBatch(octokit, owner, repo, prNumber, batchId, isSyntheticB
             : await collectBatchComments(octokit, owner, repo, prNumber, batchId);
         if (batchComments.length === 0) {
             const errorMessage = `No comments found in batch:${batchId}`;
-            await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, shipCommentContext.commentId, `❌ **Splice Bot Error**\n\n${errorMessage}`);
+            const errorMsg = `❌ **Splice Bot Error**\n\n${errorMessage}`;
+            // Use appropriate reply method
+            if (shipCommentContext.path) {
+                await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, shipCommentContext.commentId, errorMsg);
+            }
+            else {
+                await (0, github_1.createIssueComment)(octokit, owner, repo, prNumber, errorMsg);
+            }
             return { success: false, error: errorMessage };
         }
         core.info(`Processing batch:${batchId} with ${batchComments.length} comment(s)`);
@@ -30959,7 +31105,14 @@ async function spliceBatch(octokit, owner, repo, prNumber, batchId, isSyntheticB
         const batchedChanges = await mergeBatchComments(octokit, owner, repo, prNumber, batchComments);
         if (batchedChanges.files.length === 0) {
             const errorMessage = `Could not extract changes from batch:${batchId}`;
-            await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, shipCommentContext.commentId, `❌ **Splice Bot Error**\n\n${errorMessage}`);
+            const errorMsg = `❌ **Splice Bot Error**\n\n${errorMessage}`;
+            // Use appropriate reply method
+            if (shipCommentContext.path) {
+                await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, shipCommentContext.commentId, errorMsg);
+            }
+            else {
+                await (0, github_1.createIssueComment)(octokit, owner, repo, prNumber, errorMsg);
+            }
             return { success: false, error: errorMessage };
         }
         // Step 3: Generate metadata (NO branching - same logic for all)
@@ -30987,7 +31140,14 @@ async function spliceBatch(octokit, owner, repo, prNumber, batchId, isSyntheticB
         core.error(`Batch splice operation failed: ${errorMessage}`);
         // Try to reply with error
         try {
-            await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, shipCommentContext.commentId, `❌ **Splice Bot Error**\n\n${errorMessage}\n\nPlease check the action logs for more details.`);
+            const errorMsg = `❌ **Splice Bot Error**\n\n${errorMessage}\n\nPlease check the action logs for more details.`;
+            // Use appropriate reply method
+            if (shipCommentContext.path) {
+                await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, shipCommentContext.commentId, errorMsg);
+            }
+            else {
+                await (0, github_1.createIssueComment)(octokit, owner, repo, prNumber, errorMsg);
+            }
         }
         catch (replyError) {
             core.warning(`Could not reply to comment: ${replyError}`);

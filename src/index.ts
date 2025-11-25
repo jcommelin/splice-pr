@@ -48,6 +48,10 @@ async function run(): Promise<void> {
 
     if (context.eventName === 'pull_request_review_comment') {
       await handleSpliceComment(octokit, owner, repo, context);
+    } else if (context.eventName === 'issue_comment') {
+      await handleIssueComment(octokit, owner, repo, context);
+    } else if (context.eventName === 'pull_request_review') {
+      await handlePullRequestReview(octokit, owner, repo, context);
     } else if (context.eventName === 'pull_request') {
       await handleMergeCallback(octokit, owner, repo, context);
     } else {
@@ -59,6 +63,175 @@ async function run(): Promise<void> {
     } else {
       core.setFailed('An unexpected error occurred');
     }
+  }
+}
+
+/**
+ * Handle pull request review events (review summary comments for --ship commands)
+ */
+async function handlePullRequestReview(
+  octokit: ReturnType<typeof github.getOctokit>,
+  owner: string,
+  repo: string,
+  context: typeof github.context
+): Promise<void> {
+  const payload = context.payload;
+  const review = payload.review;
+  const pullRequest = payload.pull_request;
+
+  if (!pullRequest) {
+    core.info('Review is not on a pull request, skipping');
+    return;
+  }
+
+  if (!review || !review.body) {
+    core.info('Review has no body, skipping');
+    return;
+  }
+
+  // Parse the instruction from the review body
+  const instruction = parseInstruction(review.body);
+  if (!instruction) {
+    core.info('Review body does not contain splice-bot command');
+    return;
+  }
+
+  // Only handle batch:id --ship commands from review bodies
+  if (!instruction.batch || !instruction.ship) {
+    core.info('Review body must be batch:id --ship command');
+    return;
+  }
+
+  core.info(`Processing batch:${instruction.batch} --ship from review ${review.id}`);
+
+  // Get author information from the review
+  const authorLogin = review.user?.login || 'github-actions[bot]';
+  const authorEmail = review.user?.id
+    ? `${review.user.id}+${authorLogin}@users.noreply.github.com`
+    : 'github-actions[bot]@users.noreply.github.com';
+
+  // Create a minimal CommentContext for the --ship review
+  // This review doesn't have file/line info since it's a summary comment
+  const commentContext: CommentContext = {
+    commentId: review.id,
+    prNumber: pullRequest.number,
+    path: '', // Not applicable for review summaries
+    startLine: 0,
+    endLine: 0,
+    originalStartLine: null,
+    originalEndLine: null,
+    diffHunk: '',
+    body: review.body,
+    commitId: review.commit_id || '',
+    authorLogin,
+    authorEmail,
+    side: 'RIGHT',
+    startSide: null,
+  };
+
+  // Run batch splice operation
+  const result = await spliceBatch(
+    octokit,
+    owner,
+    repo,
+    pullRequest.number,
+    instruction.batch,
+    false, // Not synthetic - explicit batch
+    commentContext,
+    instruction
+  );
+
+  if (result.success) {
+    core.info(`Successfully created PR: ${result.prUrl}`);
+    core.setOutput('pr-url', result.prUrl);
+    core.setOutput('branch-name', result.branchName);
+  } else {
+    core.setFailed(result.error || 'Unknown error');
+  }
+}
+
+/**
+ * Handle issue comment events (regular PR comments for --ship commands)
+ */
+async function handleIssueComment(
+  octokit: ReturnType<typeof github.getOctokit>,
+  owner: string,
+  repo: string,
+  context: typeof github.context
+): Promise<void> {
+  const payload = context.payload;
+  const comment = payload.comment;
+  const issue = payload.issue;
+
+  // Only process comments on pull requests
+  if (!issue || !issue.pull_request) {
+    core.info('Comment is not on a pull request, skipping');
+    return;
+  }
+
+  if (!comment) {
+    core.setFailed('Missing comment in payload');
+    return;
+  }
+
+  // Parse the instruction from the comment
+  const instruction = parseInstruction(comment.body);
+  if (!instruction) {
+    core.info('Comment does not contain splice-bot command');
+    return;
+  }
+
+  // Only handle batch:id --ship commands from issue comments
+  if (!instruction.batch || !instruction.ship) {
+    core.info('Issue comment must be batch:id --ship command');
+    return;
+  }
+
+  core.info(`Processing batch:${instruction.batch} --ship from issue comment ${comment.id}`);
+
+  // Get author information from the comment
+  const authorLogin = comment.user?.login || 'github-actions[bot]';
+  const authorEmail = comment.user?.id
+    ? `${comment.user.id}+${authorLogin}@users.noreply.github.com`
+    : 'github-actions[bot]@users.noreply.github.com';
+
+  // Create a minimal CommentContext for the --ship comment
+  // This comment doesn't have file/line info since it's not a review comment
+  const commentContext: CommentContext = {
+    commentId: comment.id,
+    prNumber: issue.number,
+    path: '', // Not applicable for issue comments
+    startLine: 0,
+    endLine: 0,
+    originalStartLine: null,
+    originalEndLine: null,
+    diffHunk: '',
+    body: comment.body,
+    commitId: '',
+    authorLogin,
+    authorEmail,
+    side: 'RIGHT',
+    startSide: null,
+  };
+
+  // Run batch splice operation
+  const result = await spliceBatch(
+    octokit,
+    owner,
+    repo,
+    issue.number,
+    instruction.batch,
+    false, // Not synthetic - explicit batch
+    commentContext,
+    instruction
+  );
+
+  if (result.success) {
+    core.info(`Successfully created PR: ${result.prUrl}`);
+    core.setOutput('pr-url', result.prUrl);
+    core.setOutput('branch-name', result.branchName);
+  } else {
+    core.setFailed(result.error || 'Unknown error');
   }
 }
 
@@ -481,7 +654,15 @@ async function createSplicePr(
 
   // Reply to the original comment
   const successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
-  await replyToComment(octokit, owner, repo, prNumber, commentContext.commentId, successMessage);
+
+  // Use appropriate reply method based on whether this is a review comment or issue comment
+  if (commentContext.path) {
+    // Review comment - use replyToComment
+    await replyToComment(octokit, owner, repo, prNumber, commentContext.commentId, successMessage);
+  } else {
+    // Issue comment - use createIssueComment
+    await createIssueComment(octokit, owner, repo, prNumber, successMessage);
+  }
 
   return {
     success: true,
@@ -513,14 +694,15 @@ async function spliceBatch(
 
     if (batchComments.length === 0) {
       const errorMessage = `No comments found in batch:${batchId}`;
-      await replyToComment(
-        octokit,
-        owner,
-        repo,
-        prNumber,
-        shipCommentContext.commentId,
-        `❌ **Splice Bot Error**\n\n${errorMessage}`
-      );
+      const errorMsg = `❌ **Splice Bot Error**\n\n${errorMessage}`;
+
+      // Use appropriate reply method
+      if (shipCommentContext.path) {
+        await replyToComment(octokit, owner, repo, prNumber, shipCommentContext.commentId, errorMsg);
+      } else {
+        await createIssueComment(octokit, owner, repo, prNumber, errorMsg);
+      }
+
       return { success: false, error: errorMessage };
     }
 
@@ -531,14 +713,15 @@ async function spliceBatch(
 
     if (batchedChanges.files.length === 0) {
       const errorMessage = `Could not extract changes from batch:${batchId}`;
-      await replyToComment(
-        octokit,
-        owner,
-        repo,
-        prNumber,
-        shipCommentContext.commentId,
-        `❌ **Splice Bot Error**\n\n${errorMessage}`
-      );
+      const errorMsg = `❌ **Splice Bot Error**\n\n${errorMessage}`;
+
+      // Use appropriate reply method
+      if (shipCommentContext.path) {
+        await replyToComment(octokit, owner, repo, prNumber, shipCommentContext.commentId, errorMsg);
+      } else {
+        await createIssueComment(octokit, owner, repo, prNumber, errorMsg);
+      }
+
       return { success: false, error: errorMessage };
     }
 
@@ -578,14 +761,14 @@ async function spliceBatch(
 
     // Try to reply with error
     try {
-      await replyToComment(
-        octokit,
-        owner,
-        repo,
-        prNumber,
-        shipCommentContext.commentId,
-        `❌ **Splice Bot Error**\n\n${errorMessage}\n\nPlease check the action logs for more details.`
-      );
+      const errorMsg = `❌ **Splice Bot Error**\n\n${errorMessage}\n\nPlease check the action logs for more details.`;
+
+      // Use appropriate reply method
+      if (shipCommentContext.path) {
+        await replyToComment(octokit, owner, repo, prNumber, shipCommentContext.commentId, errorMsg);
+      } else {
+        await createIssueComment(octokit, owner, repo, prNumber, errorMsg);
+      }
     } catch (replyError) {
       core.warning(`Could not reply to comment: ${replyError}`);
     }
