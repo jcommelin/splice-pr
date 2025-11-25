@@ -103,11 +103,13 @@ async function createBlob(
 /**
  * Commit the spliced changes to the new branch.
  *
+ * Supports both single-file and multi-file commits (for batching).
+ *
  * Steps:
  * 1. Get base branch SHA and tree
- * 2. Fetch original file content from base (empty string for new files)
- * 3. Apply all hunks to produce new file content
- * 4. Create blob → tree → commit with custom author
+ * 2. For each file: fetch base content, apply hunks, create blob
+ * 3. Create tree with all modified files
+ * 4. Create commit with custom author
  * 5. Update branch ref to point to new commit
  */
 export async function commitChanges(
@@ -115,13 +117,16 @@ export async function commitChanges(
   owner: string,
   repo: string,
   branchName: string,
-  changes: ExtractedChange,
+  changes: ExtractedChange | ExtractedChange[],
   baseBranch: string,
   commitMessage: string,
   originalPrNumber: number,
   authorName: string,
   authorEmail: string
 ): Promise<string> {
+  // Normalize to array for uniform processing
+  const changesArray = Array.isArray(changes) ? changes : [changes];
+
   // Get the base branch SHA
   const { data: baseRef } = await octokit.rest.git.getRef({
     owner,
@@ -133,33 +138,37 @@ export async function commitChanges(
   // Get the base tree
   const baseTreeSha = await getTreeSha(octokit, owner, repo, baseSha);
 
-  // Get the original file content from base
-  // For new files, baseContent will be null - start with empty string
-  const baseContent = await getFileContent(octokit, owner, repo, changes.path, baseBranch);
+  // Process each file: apply hunks and create blobs
+  const treeEntries = [];
 
-  // Apply all hunks to get the new content
-  // For new files (baseContent is null), the hunk contains only additions
-  let newContent = baseContent || '';
-  for (const hunk of changes.hunks) {
-    newContent = applyHunk(newContent, hunk);
+  for (const fileChange of changesArray) {
+    // Get the original file content from base
+    // For new files, baseContent will be null - start with empty string
+    const baseContent = await getFileContent(octokit, owner, repo, fileChange.path, baseBranch);
+
+    // Apply all hunks to get the new content
+    let newContent = baseContent || '';
+    for (const hunk of fileChange.hunks) {
+      newContent = applyHunk(newContent, hunk);
+    }
+
+    // Create a blob for the new content
+    const blobSha = await createBlob(octokit, owner, repo, newContent);
+
+    treeEntries.push({
+      path: fileChange.path,
+      mode: '100644' as const,
+      type: 'blob' as const,
+      sha: blobSha,
+    });
   }
 
-  // Create a blob for the new content
-  const blobSha = await createBlob(octokit, owner, repo, newContent);
-
-  // Create a new tree with the updated file
+  // Create a new tree with all updated files
   const { data: newTree } = await octokit.rest.git.createTree({
     owner,
     repo,
     base_tree: baseTreeSha,
-    tree: [
-      {
-        path: changes.path,
-        mode: '100644',
-        type: 'blob',
-        sha: blobSha,
-      },
-    ],
+    tree: treeEntries,
   });
 
   // Create the commit with the comment author as the commit author

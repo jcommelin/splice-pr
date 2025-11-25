@@ -166,22 +166,128 @@ Verify results with `gh pr view {pr_number} --json labels,reviewRequests,isDraft
 
 ---
 
+## Batching v2 Design
+
+### Overview
+
+Batching allows collecting multiple selections across files into a single PR. Uses review comments as stateless storage - no external database needed.
+
+### Command Syntax
+
+```
+splice-bot batch:refactor              # Add selection to "refactor" batch (no immediate action)
+splice-bot batch:refactor --ship       # Finalize and create PR from all "refactor" selections
+```
+
+The `--ship` flag triggers PR creation. Without it, the bot replies reminding the user to add a `--ship` comment when ready.
+
+### How It Works
+
+**Collection phase:**
+1. User leaves review comments with `splice-bot batch:<id>` on selected lines
+2. Each comment triggers the action, but only replies with a reminder about `--ship`
+3. Comments themselves store the selection metadata (file, lines, side)
+
+**Execution phase:**
+1. User posts `splice-bot batch:<id> --ship` (can be a regular comment, doesn't need line selection)
+2. Action fetches all PR review comments
+3. Filters for `splice-bot batch:<id>` commands (excluding `--ship` comments)
+4. Parses each comment's selection: file path, line range, side (LEFT/RIGHT)
+5. Groups by file, merges overlapping selections (union)
+6. Creates single PR with all changes
+7. Replies only to the `--ship` comment with PR link
+
+### Side Handling (LEFT/RIGHT)
+
+GitHub review comments include `side` and `start_side` fields:
+- `side: "RIGHT"` → selection is on additions (new file lines)
+- `side: "LEFT"` → selection is on deletions (old file lines)
+- Mixed selection → `start_side` and `side` may differ
+
+The extraction logic must respect these:
+- RIGHT side: use `line`/`start_line` (new file line numbers)
+- LEFT side: use `original_line`/`original_start_line` (old file line numbers)
+- Mixed: extract the contiguous block spanning both sides
+
+### Multi-File Support
+
+Changes from `ExtractedChange` (single file) to `BatchedChanges`:
+```typescript
+interface BatchedChanges {
+  files: ExtractedChange[];  // Multiple files
+}
+```
+
+The `commitChanges` function creates blobs/trees for all files in one commit.
+
+### Selection Merging (Union)
+
+When multiple selections in the same file overlap:
+```
+Selection 1: lines 10-20 (additions)
+Selection 2: lines 15-25 (additions)
+Result: lines 10-25 (union)
+```
+
+Non-overlapping selections in same file become separate hunks:
+```
+Selection 1: lines 10-15
+Selection 2: lines 30-35
+Result: Two hunks, both included
+```
+
+### Design Decisions
+
+1. **Per-PR only**: Batches are scoped to a single PR
+2. **Anyone can ship**: Common use case is one reviewer doing multiple comments + `--ship` in same review
+3. **No expiration**: Old batch comments are harmless if never shipped
+4. **No partial ship**: All selections in a batch are included. KISS.
+5. **Single response**: Only reply to `--ship` comment, not every batch comment
+
+### Implementation Steps
+
+#### 1. Update types.ts
+- Add `side: 'LEFT' | 'RIGHT'` and `startSide: 'LEFT' | 'RIGHT' | null` to `CommentContext`
+- Add `BatchedChanges` interface: `{ files: ExtractedChange[] }`
+
+#### 2. Update parser.ts
+- Parse `--ship` flag
+- `batch:<id>` parsing already exists but is unused
+
+#### 3. Update index.ts - capture side info
+- Extract `comment.side` and `comment.start_side` from payload
+- Add to `CommentContext`
+
+#### 4. Update diff.ts - respect side in extraction
+- Modify `extractHunkForLineRange` signature to accept side info
+- Use appropriate line numbers based on side
+
+#### 5. Add batch collection (new function in github.ts or index.ts)
+- `collectBatchSelections(octokit, owner, repo, prNumber, batchId)`
+- Fetch all PR review comments via `octokit.rest.pulls.listReviewComments`
+- Filter for `splice-bot batch:<batchId>` (excluding `--ship`)
+- Parse each comment's selection metadata
+
+#### 6. Add batch merging (new function in diff.ts)
+- `mergeSelections(selections: Selection[]): BatchedChanges`
+- Group by file path
+- For same-file: compute union of line ranges
+- Sort for deterministic output
+
+#### 7. Update commitChanges in github.ts
+- Accept `BatchedChanges` instead of `ExtractedChange`
+- Create blob for each file
+- Build tree with all file changes
+- Single commit
+
+#### 8. Update main flow in index.ts
+- If `batch:<id>` without `--ship`: reply with reminder
+- If `batch:<id> --ship`: run batch flow
+- Non-batch commands: existing single-selection flow
+
+---
+
 ## Future Enhancements
-
-### Batching Multiple Comments
-
-```
-splice-bot batch:refactor  # on file1.ts line 10
-splice-bot batch:refactor  # on file2.ts line 25
-splice-bot batch:refactor  # on file1.ts line 50
-```
-
-Collect all comments with matching batch ID and create single PR with all changes.
-
-**Open questions**:
-1. **Trigger timing**: Explicit trigger comment recommended
-2. **Same-file conflicts**: Apply in line-number order or reject?
-3. **Partial failures**: Create PR with successful extractions and report failures
 
 ### Auto-merge base into original PR
 Merge base branch into original PR's head branch automatically after spliced PR merges.

@@ -37,6 +37,8 @@ export interface SpliceInstruction {
   branch?: string;
   /** Batch ID for combining multiple splice comments (future feature) */
   batch?: string;
+  /** Finalize and create PR for the batch (used with batch option) */
+  ship?: boolean;
 }
 
 /**
@@ -70,6 +72,10 @@ export interface CommentContext {
   authorLogin: string;
   /** Email address for the commit author */
   authorEmail: string;
+  /** Which side of the diff the comment is on: LEFT = old file (deletions), RIGHT = new file (additions) */
+  side: 'LEFT' | 'RIGHT';
+  /** Side for start of multi-line selection, null for single-line comments */
+  startSide: 'LEFT' | 'RIGHT' | null;
 }
 
 /**
@@ -121,4 +127,15 @@ export interface SpliceResult {
   branchName?: string;
   /** Error message describing what went wrong (on failure) */
   error?: string;
+}
+
+/**
+ * Batched changes from multiple splice comments.
+ *
+ * Aggregates multiple selections across potentially multiple files
+ * into a single set of changes to be committed together.
+ */
+export interface BatchedChanges {
+  /** Extracted changes grouped by file */
+  files: ExtractedChange[];
 }

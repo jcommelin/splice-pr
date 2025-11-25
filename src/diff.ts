@@ -53,8 +53,13 @@ interface DiffLine {
 
 /**
  * Extract only the selected lines from a file's diff
+ *
+ * @param filePatch - The unified diff patch for a file
+ * @param startLine - Start line in target file (old or new depending on side)
+ * @param endLine - End line in target file (old or new depending on side)
+ * @param side - Which side of the diff: 'LEFT' for old file (deletions), 'RIGHT' for new file (additions)
  */
-export function extractHunkForLineRange(filePatch: string, startLine: number, endLine: number): DiffHunk | null {
+export function extractHunkForLineRange(filePatch: string, startLine: number, endLine: number, side: 'LEFT' | 'RIGHT' = 'RIGHT'): DiffHunk | null {
   const lines = filePatch.split('\n');
   const allDiffLines: DiffLine[] = [];
 
@@ -103,52 +108,27 @@ export function extractHunkForLineRange(filePatch: string, startLine: number, en
     }
   }
 
-  // Filter to only include lines within the selected range
-  // Include a line if:
-  // - It's an addition/context and its newLineNum is in range
-  // - It's a deletion that's adjacent to selected lines (same oldLineNum region)
+  // Filter to only include lines within the selected range based on side
   const selectedLines: DiffLine[] = [];
-  let minOldLine = Infinity;
-  let maxOldLine = 0;
-  let minNewLine = Infinity;
-  let maxNewLine = 0;
 
-  // First pass: find additions and context lines in range
-  for (const diffLine of allDiffLines) {
-    if (diffLine.newLineNum !== null &&
-        diffLine.newLineNum >= startLine &&
-        diffLine.newLineNum <= endLine) {
-      selectedLines.push(diffLine);
-      if (diffLine.oldLineNum !== null) {
-        minOldLine = Math.min(minOldLine, diffLine.oldLineNum);
-        maxOldLine = Math.max(maxOldLine, diffLine.oldLineNum);
+  if (side === 'LEFT') {
+    // LEFT side: user selected lines from the old file (deletions/context)
+    // Include lines where oldLineNum is in the range
+    for (const diffLine of allDiffLines) {
+      if (diffLine.oldLineNum !== null &&
+          diffLine.oldLineNum >= startLine &&
+          diffLine.oldLineNum <= endLine) {
+        selectedLines.push(diffLine);
       }
-      minNewLine = Math.min(minNewLine, diffLine.newLineNum);
-      maxNewLine = Math.max(maxNewLine, diffLine.newLineNum);
     }
-  }
-
-  // Second pass: include deletions that are adjacent to our selected additions
-  // We need to find deletions that occur immediately before the first selected line
-  // or within the old line range if we have context lines
-  for (let i = 0; i < allDiffLines.length; i++) {
-    const diffLine = allDiffLines[i];
-    if (diffLine.type === 'deletion' && diffLine.oldLineNum !== null) {
-      // Include deletion if it's within our old line range (when we have context)
-      if (minOldLine !== Infinity && diffLine.oldLineNum >= minOldLine && diffLine.oldLineNum <= maxOldLine + 1) {
-        if (!selectedLines.includes(diffLine)) {
-          selectedLines.push(diffLine);
-        }
-      }
-      // Also include deletions that are immediately followed by our selected additions
-      // Check if the next line in the diff is one of our selected additions
-      else if (i + 1 < allDiffLines.length) {
-        const nextLine = allDiffLines[i + 1];
-        if (selectedLines.includes(nextLine) && nextLine.type === 'addition') {
-          if (!selectedLines.includes(diffLine)) {
-            selectedLines.push(diffLine);
-          }
-        }
+  } else {
+    // RIGHT side: user selected lines from the new file (additions/context)
+    // Include lines where newLineNum is in the range
+    for (const diffLine of allDiffLines) {
+      if (diffLine.newLineNum !== null &&
+          diffLine.newLineNum >= startLine &&
+          diffLine.newLineNum <= endLine) {
+        selectedLines.push(diffLine);
       }
     }
   }
@@ -417,14 +397,15 @@ export async function extractChanges(
   prNumber: number,
   filePath: string,
   startLine: number,
-  endLine: number
+  endLine: number,
+  side: 'LEFT' | 'RIGHT' = 'RIGHT'
 ): Promise<ExtractedChange | null> {
   const patch = await getFileDiff(octokit, owner, repo, prNumber, filePath);
   if (!patch) {
     return null;
   }
 
-  const hunk = extractHunkForLineRange(patch, startLine, endLine);
+  const hunk = extractHunkForLineRange(patch, startLine, endLine, side);
   if (!hunk) {
     return null;
   }
