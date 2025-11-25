@@ -29964,8 +29964,13 @@ function parseHunkHeader(header) {
 }
 /**
  * Extract only the selected lines from a file's diff
+ *
+ * @param filePatch - The unified diff patch for a file
+ * @param startLine - Start line in target file (old or new depending on side)
+ * @param endLine - End line in target file (old or new depending on side)
+ * @param side - Which side of the diff: 'LEFT' for old file (deletions), 'RIGHT' for new file (additions)
  */
-function extractHunkForLineRange(filePatch, startLine, endLine) {
+function extractHunkForLineRange(filePatch, startLine, endLine, side = 'RIGHT') {
     const lines = filePatch.split('\n');
     const allDiffLines = [];
     let currentOldLine = 0;
@@ -30012,50 +30017,27 @@ function extractHunkForLineRange(filePatch, startLine, endLine) {
             currentNewLine++;
         }
     }
-    // Filter to only include lines within the selected range
-    // Include a line if:
-    // - It's an addition/context and its newLineNum is in range
-    // - It's a deletion that's adjacent to selected lines (same oldLineNum region)
+    // Filter to only include lines within the selected range based on side
     const selectedLines = [];
-    let minOldLine = Infinity;
-    let maxOldLine = 0;
-    let minNewLine = Infinity;
-    let maxNewLine = 0;
-    // First pass: find additions and context lines in range
-    for (const diffLine of allDiffLines) {
-        if (diffLine.newLineNum !== null &&
-            diffLine.newLineNum >= startLine &&
-            diffLine.newLineNum <= endLine) {
-            selectedLines.push(diffLine);
-            if (diffLine.oldLineNum !== null) {
-                minOldLine = Math.min(minOldLine, diffLine.oldLineNum);
-                maxOldLine = Math.max(maxOldLine, diffLine.oldLineNum);
+    if (side === 'LEFT') {
+        // LEFT side: user selected lines from the old file (deletions/context)
+        // Include lines where oldLineNum is in the range
+        for (const diffLine of allDiffLines) {
+            if (diffLine.oldLineNum !== null &&
+                diffLine.oldLineNum >= startLine &&
+                diffLine.oldLineNum <= endLine) {
+                selectedLines.push(diffLine);
             }
-            minNewLine = Math.min(minNewLine, diffLine.newLineNum);
-            maxNewLine = Math.max(maxNewLine, diffLine.newLineNum);
         }
     }
-    // Second pass: include deletions that are adjacent to our selected additions
-    // We need to find deletions that occur immediately before the first selected line
-    // or within the old line range if we have context lines
-    for (let i = 0; i < allDiffLines.length; i++) {
-        const diffLine = allDiffLines[i];
-        if (diffLine.type === 'deletion' && diffLine.oldLineNum !== null) {
-            // Include deletion if it's within our old line range (when we have context)
-            if (minOldLine !== Infinity && diffLine.oldLineNum >= minOldLine && diffLine.oldLineNum <= maxOldLine + 1) {
-                if (!selectedLines.includes(diffLine)) {
-                    selectedLines.push(diffLine);
-                }
-            }
-            // Also include deletions that are immediately followed by our selected additions
-            // Check if the next line in the diff is one of our selected additions
-            else if (i + 1 < allDiffLines.length) {
-                const nextLine = allDiffLines[i + 1];
-                if (selectedLines.includes(nextLine) && nextLine.type === 'addition') {
-                    if (!selectedLines.includes(diffLine)) {
-                        selectedLines.push(diffLine);
-                    }
-                }
+    else {
+        // RIGHT side: user selected lines from the new file (additions/context)
+        // Include lines where newLineNum is in the range
+        for (const diffLine of allDiffLines) {
+            if (diffLine.newLineNum !== null &&
+                diffLine.newLineNum >= startLine &&
+                diffLine.newLineNum <= endLine) {
+                selectedLines.push(diffLine);
             }
         }
     }
@@ -30275,12 +30257,12 @@ function applyHunk(baseContent, hunk) {
 /**
  * Extract changes for a specific file and line range
  */
-async function extractChanges(octokit, owner, repo, prNumber, filePath, startLine, endLine) {
+async function extractChanges(octokit, owner, repo, prNumber, filePath, startLine, endLine, side = 'RIGHT') {
     const patch = await getFileDiff(octokit, owner, repo, prNumber, filePath);
     if (!patch) {
         return null;
     }
-    const hunk = extractHunkForLineRange(patch, startLine, endLine);
+    const hunk = extractHunkForLineRange(patch, startLine, endLine, side);
     if (!hunk) {
         return null;
     }
@@ -30379,14 +30361,18 @@ async function createBlob(octokit, owner, repo, content) {
 /**
  * Commit the spliced changes to the new branch.
  *
+ * Supports both single-file and multi-file commits (for batching).
+ *
  * Steps:
  * 1. Get base branch SHA and tree
- * 2. Fetch original file content from base (empty string for new files)
- * 3. Apply all hunks to produce new file content
- * 4. Create blob → tree → commit with custom author
+ * 2. For each file: fetch base content, apply hunks, create blob
+ * 3. Create tree with all modified files
+ * 4. Create commit with custom author
  * 5. Update branch ref to point to new commit
  */
 async function commitChanges(octokit, owner, repo, branchName, changes, baseBranch, commitMessage, originalPrNumber, authorName, authorEmail) {
+    // Normalize to array for uniform processing
+    const changesArray = Array.isArray(changes) ? changes : [changes];
     // Get the base branch SHA
     const { data: baseRef } = await octokit.rest.git.getRef({
         owner,
@@ -30396,30 +30382,32 @@ async function commitChanges(octokit, owner, repo, branchName, changes, baseBran
     const baseSha = baseRef.object.sha;
     // Get the base tree
     const baseTreeSha = await getTreeSha(octokit, owner, repo, baseSha);
-    // Get the original file content from base
-    // For new files, baseContent will be null - start with empty string
-    const baseContent = await (0, diff_1.getFileContent)(octokit, owner, repo, changes.path, baseBranch);
-    // Apply all hunks to get the new content
-    // For new files (baseContent is null), the hunk contains only additions
-    let newContent = baseContent || '';
-    for (const hunk of changes.hunks) {
-        newContent = (0, diff_1.applyHunk)(newContent, hunk);
+    // Process each file: apply hunks and create blobs
+    const treeEntries = [];
+    for (const fileChange of changesArray) {
+        // Get the original file content from base
+        // For new files, baseContent will be null - start with empty string
+        const baseContent = await (0, diff_1.getFileContent)(octokit, owner, repo, fileChange.path, baseBranch);
+        // Apply all hunks to get the new content
+        let newContent = baseContent || '';
+        for (const hunk of fileChange.hunks) {
+            newContent = (0, diff_1.applyHunk)(newContent, hunk);
+        }
+        // Create a blob for the new content
+        const blobSha = await createBlob(octokit, owner, repo, newContent);
+        treeEntries.push({
+            path: fileChange.path,
+            mode: '100644',
+            type: 'blob',
+            sha: blobSha,
+        });
     }
-    // Create a blob for the new content
-    const blobSha = await createBlob(octokit, owner, repo, newContent);
-    // Create a new tree with the updated file
+    // Create a new tree with all updated files
     const { data: newTree } = await octokit.rest.git.createTree({
         owner,
         repo,
         base_tree: baseTreeSha,
-        tree: [
-            {
-                path: changes.path,
-                mode: '100644',
-                type: 'blob',
-                sha: blobSha,
-            },
-        ],
+        tree: treeEntries,
     });
     // Create the commit with the comment author as the commit author
     const fullMessage = `${commitMessage}\n\nSpliced from PR #${originalPrNumber}`;
@@ -30670,9 +30658,20 @@ async function handleSpliceComment(octokit, owner, repo, context) {
         commitId: comment.commit_id,
         authorLogin,
         authorEmail,
+        side: comment.side || 'RIGHT',
+        startSide: comment.start_side || null,
     };
-    // Run the splice operation
-    const result = await splice(octokit, owner, repo, commentContext, instruction);
+    // Batch comments without --ship are no-ops (handled when --ship is posted)
+    if (instruction.batch && !instruction.ship) {
+        core.info(`Added to batch:${instruction.batch}, waiting for --ship`);
+        return;
+    }
+    // Determine batch ID: explicit batch or synthetic single-comment batch
+    const batchId = instruction.batch || `c${comment.id}`;
+    const isSyntheticBatch = !instruction.batch;
+    core.info(`Processing ${isSyntheticBatch ? 'single-comment' : 'batch'} splice with id: ${batchId}`);
+    // Run unified splice operation
+    const result = await spliceBatch(octokit, owner, repo, pullRequest.number, batchId, isSyntheticBatch, commentContext, instruction);
     if (result.success) {
         core.info(`Successfully created PR: ${result.prUrl}`);
         core.setOutput('pr-url', result.prUrl);
@@ -30750,117 +30749,245 @@ function parseSpliceBotMetadata(body) {
     }
 }
 /**
- * Core splice operation: extract changes and create a new PR.
+ * Collect all review comments with the same batch ID.
  *
- * Steps:
- * 1. Get PR details and determine base branch
- * 2. Extract changes based on mode (lines, hunk, or entire file)
- * 3. Create branch, commit changes, create PR
- * 4. Add labels/reviewers if specified
- * 5. Reply to original comment with result
+ * Fetches all review comments from the PR and filters to those that:
+ * 1. Contain a splice-bot command
+ * 2. Have the matching batch ID
+ *
+ * @returns Array of CommentContext objects for all comments in the batch
  */
-async function splice(octokit, owner, repo, commentContext, instruction) {
-    const { prNumber, path, startLine, endLine, commentId, authorLogin, authorEmail } = commentContext;
-    try {
-        // Get PR details
-        core.info(`Getting PR #${prNumber} details...`);
-        const prDetails = await (0, github_1.getPrDetails)(octokit, owner, repo, prNumber);
-        // Determine the base branch
-        const baseBranch = instruction?.base || prDetails.baseBranch;
-        // Generate or use custom branch name, appending suffix if it already exists
-        let branchName = instruction?.branch || (0, parser_1.generateBranchName)(prNumber, commentId);
-        let suffix = 2;
-        while (await (0, github_1.branchExists)(octokit, owner, repo, branchName)) {
-            const baseName = instruction?.branch || (0, parser_1.generateBranchName)(prNumber, commentId);
-            branchName = `${baseName}-${suffix}`;
-            suffix++;
+async function collectBatchComments(octokit, owner, repo, prNumber, batchId) {
+    core.info(`Collecting batch comments for batch:${batchId}...`);
+    // Fetch all review comments from the PR
+    const { data: comments } = await octokit.rest.pulls.listReviewComments({
+        owner,
+        repo,
+        pull_number: prNumber,
+    });
+    const batchComments = [];
+    for (const comment of comments) {
+        // Parse instruction from comment
+        const instruction = (0, parser_1.parseInstruction)(comment.body);
+        if (!instruction || instruction.batch !== batchId) {
+            continue;
         }
-        // Extract the changes based on mode
-        let changes = null;
-        const lineRange = startLine === endLine ? `line ${endLine}` : `lines ${startLine}-${endLine}`;
-        const extractionMode = instruction?.entireFile ? 'entire file'
-            : instruction?.entireHunk ? 'entire hunk'
-                : 'lines';
-        core.info(`Extracting ${extractionMode} from ${path}${extractionMode === 'lines' ? ` at ${lineRange}` : ''}...`);
-        if (instruction?.entireFile || instruction?.entireHunk) {
-            const patch = await (0, diff_1.getFileDiff)(octokit, owner, repo, prNumber, path);
-            if (patch) {
-                const hunks = instruction.entireFile
-                    ? (0, diff_1.extractAllHunks)(patch)
-                    : [(0, diff_1.extractEntireHunkForLine)(patch, endLine)].filter((h) => h !== null);
-                if (hunks.length > 0) {
-                    changes = { path, hunks };
+        // Extract comment context
+        const endLine = comment.line || comment.original_line || 0;
+        const startLine = comment.start_line || endLine;
+        const authorLogin = comment.user?.login || 'github-actions[bot]';
+        const authorEmail = comment.user?.id
+            ? `${comment.user.id}+${authorLogin}@users.noreply.github.com`
+            : 'github-actions[bot]@users.noreply.github.com';
+        batchComments.push({
+            commentId: comment.id,
+            prNumber,
+            path: comment.path,
+            startLine,
+            endLine,
+            originalStartLine: comment.original_start_line || comment.original_line || null,
+            originalEndLine: comment.original_line || null,
+            diffHunk: comment.diff_hunk,
+            body: comment.body,
+            commitId: comment.commit_id,
+            authorLogin,
+            authorEmail,
+            side: comment.side || 'RIGHT',
+            startSide: comment.start_side || null,
+        });
+    }
+    core.info(`Found ${batchComments.length} comments in batch:${batchId}`);
+    return batchComments;
+}
+/**
+ * Merge batch comments into a single set of changes.
+ *
+ * Groups selections by file and side, sorts ranges by start line, merges overlapping ranges.
+ */
+async function mergeBatchComments(octokit, owner, repo, prNumber, comments) {
+    core.info('Merging batch comments...');
+    // Group comments by file
+    const fileGroups = new Map();
+    for (const comment of comments) {
+        const existing = fileGroups.get(comment.path) || [];
+        existing.push(comment);
+        fileGroups.set(comment.path, existing);
+    }
+    const files = [];
+    // Process each file
+    for (const [path, fileComments] of fileGroups.entries()) {
+        core.info(`Processing ${fileComments.length} selections in ${path}...`);
+        // Get the file's full diff
+        const patch = await (0, diff_1.getFileDiff)(octokit, owner, repo, prNumber, path);
+        if (!patch) {
+            core.warning(`Could not get diff for ${path}, skipping`);
+            continue;
+        }
+        // Collect ranges grouped by side
+        const leftRanges = [];
+        const rightRanges = [];
+        for (const comment of fileComments) {
+            const side = comment.side;
+            const start = side === 'LEFT'
+                ? (comment.originalStartLine || comment.originalEndLine || 0)
+                : comment.startLine;
+            const end = side === 'LEFT'
+                ? (comment.originalEndLine || 0)
+                : comment.endLine;
+            // Skip if we couldn't determine valid line numbers
+            if (start === 0 || end === 0) {
+                core.warning(`Skipping comment ${comment.commentId} - could not determine line numbers`);
+                continue;
+            }
+            const targetRanges = side === 'LEFT' ? leftRanges : rightRanges;
+            targetRanges.push({ start, end });
+        }
+        // Merge overlapping ranges for each side
+        const extractedHunks = [];
+        const sidesToProcess = [
+            { side: 'LEFT', ranges: leftRanges },
+            { side: 'RIGHT', ranges: rightRanges },
+        ];
+        for (const { side, ranges } of sidesToProcess) {
+            if (ranges.length === 0)
+                continue;
+            // Sort ranges by start line (ascending order)
+            // compareFn returns: negative if first < second, 0 if equal, positive if first > second
+            ranges.sort((first, second) => {
+                if (first.start < second.start)
+                    return -1;
+                if (first.start > second.start)
+                    return 1;
+                return 0;
+            });
+            // Merge overlapping or adjacent ranges
+            const merged = [];
+            let current = ranges[0];
+            for (let i = 1; i < ranges.length; i++) {
+                const next = ranges[i];
+                if (next.start <= current.end + 1) {
+                    // Ranges overlap or are adjacent - merge them
+                    current.end = Math.max(current.end, next.end);
+                }
+                else {
+                    // Gap between ranges - save current and start new
+                    merged.push(current);
+                    current = next;
+                }
+            }
+            merged.push(current);
+            // Extract hunk for each merged range
+            for (const range of merged) {
+                const hunk = (0, diff_1.extractHunkForLineRange)(patch, range.start, range.end, side);
+                if (hunk) {
+                    extractedHunks.push(hunk);
                 }
             }
         }
-        else {
-            changes = await (0, diff_1.extractChanges)(octokit, owner, repo, prNumber, path, startLine, endLine);
+        if (extractedHunks.length > 0) {
+            files.push({ path, hunks: extractedHunks });
         }
-        if (!changes) {
-            const errorMessage = `Could not extract changes from ${path} (${extractionMode}). The file may not have changes at this location.`;
-            await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, commentId, `❌ **Splice Bot Error**\n\n${errorMessage}`);
+    }
+    return { files };
+}
+/**
+ * Common helper to create PR from extracted changes.
+ */
+async function createSplicePr(octokit, owner, repo, prNumber, changes, commentContext, instruction, metadata) {
+    // Get PR details
+    core.info(`Getting PR #${prNumber} details...`);
+    const prDetails = await (0, github_1.getPrDetails)(octokit, owner, repo, prNumber);
+    // Determine the base branch
+    const baseBranch = instruction?.base || prDetails.baseBranch;
+    // Generate or use custom branch name, appending suffix if exists
+    let branchName = instruction?.branch || metadata.branchNameBase;
+    let suffix = 2;
+    while (await (0, github_1.branchExists)(octokit, owner, repo, branchName)) {
+        const baseName = instruction?.branch || metadata.branchNameBase;
+        branchName = `${baseName}-${suffix}`;
+        suffix++;
+    }
+    // Create the new branch
+    core.info(`Creating branch ${branchName}...`);
+    await (0, github_1.createBranch)(octokit, owner, repo, branchName, baseBranch);
+    // Use custom title or default
+    const prTitle = instruction?.title || metadata.defaultTitle;
+    // Commit the changes
+    const changesArray = Array.isArray(changes) ? changes : [changes];
+    core.info(`Committing ${changesArray.length} file(s)...`);
+    await (0, github_1.commitChanges)(octokit, owner, repo, branchName, changes, baseBranch, prTitle, prNumber, commentContext.authorLogin, commentContext.authorEmail);
+    // Create the PR
+    core.info('Creating pull request...');
+    const newPr = await (0, github_1.createPullRequest)(octokit, owner, repo, prTitle, metadata.description, branchName, baseBranch, instruction?.draft || false);
+    // Add labels if specified
+    if (instruction?.labels && instruction.labels.length > 0) {
+        core.info(`Adding labels: ${instruction.labels.join(', ')}`);
+        await (0, github_1.addLabels)(octokit, owner, repo, newPr.number, instruction.labels);
+    }
+    // Request reviewers if specified
+    if (instruction?.reviewers && instruction.reviewers.length > 0) {
+        core.info(`Requesting reviewers: ${instruction.reviewers.join(', ')}`);
+        await (0, github_1.requestReviewers)(octokit, owner, repo, newPr.number, instruction.reviewers);
+    }
+    // Reply to the original comment
+    const successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
+    await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, commentContext.commentId, successMessage);
+    return {
+        success: true,
+        prUrl: newPr.url,
+        branchName,
+    };
+}
+/**
+ * Unified splice operation: handles both single-comment and batch splices.
+ * Single-comment splices are treated as batches of size 1 with synthetic batch ID.
+ */
+async function spliceBatch(octokit, owner, repo, prNumber, batchId, isSyntheticBatch, shipCommentContext, instruction) {
+    try {
+        // Step 1: Collect batch comments
+        // ONLY special casing: synthetic batch vs explicit batch
+        const batchComments = isSyntheticBatch
+            ? [shipCommentContext]
+            : await collectBatchComments(octokit, owner, repo, prNumber, batchId);
+        if (batchComments.length === 0) {
+            const errorMessage = `No comments found in batch:${batchId}`;
+            await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, shipCommentContext.commentId, `❌ **Splice Bot Error**\n\n${errorMessage}`);
             return { success: false, error: errorMessage };
         }
-        // Create the new branch
-        core.info(`Creating branch ${branchName}...`);
-        await (0, github_1.createBranch)(octokit, owner, repo, branchName, baseBranch);
-        // Generate PR title
-        const prTitle = instruction?.title || (0, parser_1.generatePrTitle)(path);
-        // Commit the changes
-        core.info('Committing changes...');
-        await (0, github_1.commitChanges)(octokit, owner, repo, branchName, changes, baseBranch, prTitle, prNumber, authorLogin, authorEmail);
-        // TODO: Rethink conflict detection - current approach needs work
-        // core.info('Checking for potential conflicts...');
-        // const hasConflicts = await checkForConflicts(
-        //   octokit,
-        //   owner,
-        //   repo,
-        //   path,
-        //   baseBranch,
-        //   prDetails.headBranch
-        // );
-        // if (hasConflicts) {
-        //   core.warning(`File ${path} may have been modified in base branch - conflicts possible`);
-        // }
-        // Generate PR description
-        const prDescription = (0, parser_1.generatePrDescription)({
+        core.info(`Processing batch:${batchId} with ${batchComments.length} comment(s)`);
+        // Step 2: Merge all comments into unified changes
+        const batchedChanges = await mergeBatchComments(octokit, owner, repo, prNumber, batchComments);
+        if (batchedChanges.files.length === 0) {
+            const errorMessage = `Could not extract changes from batch:${batchId}`;
+            await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, shipCommentContext.commentId, `❌ **Splice Bot Error**\n\n${errorMessage}`);
+            return { success: false, error: errorMessage };
+        }
+        // Step 3: Generate metadata (NO branching - same logic for all)
+        const prDetails = await (0, github_1.getPrDetails)(octokit, owner, repo, prNumber);
+        const branchNameBase = `splice/pr-${prNumber}-${batchId}`;
+        const defaultTitle = `[Splice] ${batchId} from PR #${prNumber}`;
+        const description = (0, parser_1.generateBatchDescription)({
             originalPrNumber: prNumber,
             originalPrTitle: prDetails.title,
-            path,
-            startLine,
-            endLine,
-            commentId,
-            authorLogin,
+            batchId,
+            filePaths: batchedChanges.files.map(f => f.path),
+            commentId: shipCommentContext.commentId,
+            authorLogin: shipCommentContext.authorLogin,
             customDescription: instruction?.description,
         });
-        // Create the PR
-        core.info('Creating pull request...');
-        const newPr = await (0, github_1.createPullRequest)(octokit, owner, repo, prTitle, prDescription, branchName, baseBranch, instruction?.draft || false);
-        // Add labels if specified
-        if (instruction?.labels && instruction.labels.length > 0) {
-            core.info(`Adding labels: ${instruction.labels.join(', ')}`);
-            await (0, github_1.addLabels)(octokit, owner, repo, newPr.number, instruction.labels);
-        }
-        // Request reviewers if specified
-        if (instruction?.reviewers && instruction.reviewers.length > 0) {
-            core.info(`Requesting reviewers: ${instruction.reviewers.join(', ')}`);
-            await (0, github_1.requestReviewers)(octokit, owner, repo, newPr.number, instruction.reviewers);
-        }
-        // Reply to the original comment
-        const successMessage = `✅ **Splice Bot** created:\n [#${newPr.number} - ${prTitle}](${newPr.url})`;
-        await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, commentId, successMessage);
-        return {
-            success: true,
-            prUrl: newPr.url,
-            branchName,
-        };
+        // Step 4: Create the PR
+        return await createSplicePr(octokit, owner, repo, prNumber, batchedChanges.files, shipCommentContext, instruction, {
+            branchNameBase,
+            defaultTitle,
+            description,
+        });
     }
     catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-        core.error(`Splice operation failed: ${errorMessage}`);
+        core.error(`Batch splice operation failed: ${errorMessage}`);
         // Try to reply with error
         try {
-            await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, commentId, `❌ **Splice Bot Error**\n\n${errorMessage}\n\nPlease check the action logs for more details.`);
+            await (0, github_1.replyToComment)(octokit, owner, repo, prNumber, shipCommentContext.commentId, `❌ **Splice Bot Error**\n\n${errorMessage}\n\nPlease check the action logs for more details.`);
         }
         catch (replyError) {
             core.warning(`Could not reply to comment: ${replyError}`);
@@ -30886,9 +31013,7 @@ run();
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseInstruction = parseInstruction;
-exports.generateBranchName = generateBranchName;
-exports.generatePrTitle = generatePrTitle;
-exports.generatePrDescription = generatePrDescription;
+exports.generateBatchDescription = generateBatchDescription;
 /**
  * Parse splice-bot command from comment body.
  *
@@ -30926,6 +31051,9 @@ function parseInstruction(body) {
     if (/--entire-file\b/i.test(args)) {
         instruction.entireFile = true;
     }
+    if (/--ship\b/i.test(args)) {
+        instruction.ship = true;
+    }
     // Structured format: key:value or key:"value with spaces"
     const keyValuePattern = /(\w+):(?:"([^"]+)"|(\S+))/g;
     let keyMatch;
@@ -30960,40 +31088,22 @@ function parseInstruction(body) {
     return instruction;
 }
 /**
- * Generate a branch name for the spliced PR.
+ * Generate PR description for batch splice operations.
  *
- * Uses commentId for uniqueness, allowing multiple splices from the same PR.
- * Format: `splice/pr-{prNumber}-{commentId}`
+ * Works uniformly for both single-file (synthetic batch) and multi-file (explicit batch) splices.
+ * Lists all files being spliced with bullet points.
  */
-function generateBranchName(prNumber, commentId) {
-    return `splice/pr-${prNumber}-${commentId}`;
-}
-/**
- * Generate a default PR title based on the file being spliced.
- *
- * Used when the user doesn't provide a custom title via `splice-bot "title"`.
- */
-function generatePrTitle(path) {
-    const fileName = path.split('/').pop() || path;
-    return `[Splice] Extract changes from ${fileName}`;
-}
-/**
- * Generate PR description with metadata for post-merge callbacks.
- *
- * The description includes:
- * - Link to the original PR
- * - File and line range
- * - Link to the triggering comment
- * - Hidden JSON metadata for the merge callback to find the original PR
- */
-function generatePrDescription(options) {
-    const { originalPrNumber, originalPrTitle, path, startLine, endLine, commentId, authorLogin, customDescription, } = options;
-    const lineRange = startLine === endLine ? `line ${endLine}` : `lines ${startLine}-${endLine}`;
+function generateBatchDescription(options) {
+    const { originalPrNumber, originalPrTitle, batchId, filePaths, commentId, authorLogin, customDescription, } = options;
+    const fileList = filePaths.map(f => `- \`${f}\``).join('\n');
     const parts = [
         `Spliced from #${originalPrNumber} (${originalPrTitle})`,
         '',
-        `- **File**: \`${path}\` at ${lineRange}`,
-        `- **Requested by**: @${authorLogin} ([view comment](../pull/${originalPrNumber}#discussion_r${commentId}))`,
+        `**Batch ID**: \`${batchId}\``,
+        `**Files**:`,
+        fileList,
+        '',
+        `**Requested by**: @${authorLogin}`,
     ];
     if (customDescription) {
         parts.push('', customDescription);

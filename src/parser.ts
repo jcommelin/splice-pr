@@ -48,6 +48,9 @@ export function parseInstruction(body: string): SpliceInstruction | null {
   if (/--entire-file\b/i.test(args)) {
     instruction.entireFile = true;
   }
+  if (/--ship\b/i.test(args)) {
+    instruction.ship = true;
+  }
 
   // Structured format: key:value or key:"value with spaces"
   const keyValuePattern = /(\w+):(?:"([^"]+)"|(\S+))/g;
@@ -86,39 +89,17 @@ export function parseInstruction(body: string): SpliceInstruction | null {
   return instruction;
 }
 
-/**
- * Generate a branch name for the spliced PR.
- *
- * Uses commentId for uniqueness, allowing multiple splices from the same PR.
- * Format: `splice/pr-{prNumber}-{commentId}`
- */
-export function generateBranchName(prNumber: number, commentId: number): string {
-  return `splice/pr-${prNumber}-${commentId}`;
-}
-
-/**
- * Generate a default PR title based on the file being spliced.
- *
- * Used when the user doesn't provide a custom title via `splice-bot "title"`.
- */
-export function generatePrTitle(path: string): string {
-  const fileName = path.split('/').pop() || path;
-  return `[Splice] Extract changes from ${fileName}`;
-}
-
-/** Options for generating a spliced PR description */
-export interface PrDescriptionOptions {
+/** Options for generating a batch PR description */
+export interface BatchDescriptionOptions {
   /** PR number of the source PR */
   originalPrNumber: number;
   /** Title of the source PR */
   originalPrTitle: string;
-  /** File path being spliced */
-  path: string;
-  /** First line of the selection */
-  startLine: number;
-  /** Last line of the selection */
-  endLine: number;
-  /** Comment ID (for linking back) */
+  /** Batch ID (explicit batch name or synthetic c{commentId}) */
+  batchId: string;
+  /** List of files being spliced */
+  filePaths: string[];
+  /** Comment ID (for metadata) */
   commentId: number;
   /** GitHub username who requested the splice */
   authorLogin: string;
@@ -127,33 +108,32 @@ export interface PrDescriptionOptions {
 }
 
 /**
- * Generate PR description with metadata for post-merge callbacks.
+ * Generate PR description for batch splice operations.
  *
- * The description includes:
- * - Link to the original PR
- * - File and line range
- * - Link to the triggering comment
- * - Hidden JSON metadata for the merge callback to find the original PR
+ * Works uniformly for both single-file (synthetic batch) and multi-file (explicit batch) splices.
+ * Lists all files being spliced with bullet points.
  */
-export function generatePrDescription(options: PrDescriptionOptions): string {
+export function generateBatchDescription(options: BatchDescriptionOptions): string {
   const {
     originalPrNumber,
     originalPrTitle,
-    path,
-    startLine,
-    endLine,
+    batchId,
+    filePaths,
     commentId,
     authorLogin,
     customDescription,
   } = options;
 
-  const lineRange = startLine === endLine ? `line ${endLine}` : `lines ${startLine}-${endLine}`;
+  const fileList = filePaths.map(f => `- \`${f}\``).join('\n');
 
   const parts = [
     `Spliced from #${originalPrNumber} (${originalPrTitle})`,
     '',
-    `- **File**: \`${path}\` at ${lineRange}`,
-    `- **Requested by**: @${authorLogin} ([view comment](../pull/${originalPrNumber}#discussion_r${commentId}))`,
+    `**Batch ID**: \`${batchId}\``,
+    `**Files**:`,
+    fileList,
+    '',
+    `**Requested by**: @${authorLogin}`,
   ];
 
   if (customDescription) {
